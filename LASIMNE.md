@@ -1,49 +1,72 @@
-# Klausīšanās asistents · 1. posma prototips
+# Klausīšanās asistents
 
-Šis prototips pārbauda lielāko risku: vai iPhone tīmekļa lietotne automašīnā spēj atskaņot audio, ar lielu pogu ierakstīt balss piezīmi un pēc tam pati atsākt atskaņošanu.
+Personīgs rīks zinātnisku rakstu klausīšanai ar balss piezīmēm. Specifikācija: `klausisanas_riks_specifikacija_v0.2.md`.
 
-Prototipā vēl nav runas sintēzes, Google dokumentu un runas atpazīšanas. Tās nāks 2. un 3. posmā.
+| Daļa | Fails | Statuss |
+| --- | --- | --- |
+| Lietotne iPhone un datorā | `index.html` | 1. posms darbojas, 2. posmā pievienota laika karte |
+| Teksta sagatavošana un audio | `klausies.py` | 2. posms |
+| Piezīmes Google dokumentā | | 3. posms |
 
-## Kas ir mapē
+Lietotne: https://e-vanags.github.io/klausies/
+
+## Skripta uzstādīšana Mac (vienu reizi)
+
+```bash
+cd ~/Projects/klausies
+git pull
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+echo "alias klausies='~/Projects/klausies/.venv/bin/python ~/Projects/klausies/klausies.py'" >> ~/.zshrc
+source ~/.zshrc
+```
+
+Atslēgas glabājas failā `~/.config/klausies/env` ārpus repozitorija:
+
+```
+AZURE_SPEECH_KEY=...
+AZURE_SPEECH_REGION=westeurope
+ANTHROPIC_API_KEY=...
+```
+
+## Lietošana
+
+```bash
+klausies ~/Downloads/raksts.pdf --tikai-teksts   # tikai teksts, bez maksas, lai pārbaudītu
+klausies ~/Downloads/raksts.pdf                  # teksts un audio
+klausies raksts.pdf --balss everita              # cita balss
+klausies raksts.pdf --bez-claude                 # teksta sagatavošana tikai ar noteikumiem
+```
+
+Rezultāti nonāk iCloud Drive mapē `Klausisanas`:
 
 | Fails | Nozīme |
 | --- | --- |
-| `index.html` | Visa lietotne vienā failā |
-| `manifest.webmanifest` | Ļauj pievienot lietotni sākuma ekrānam |
-| `icon-180.png`, `icon-512.png` | Ikonas |
+| `<id>.m4a` | Audio |
+| `<id>.json` | Laika karte: katrs teikums ar laiku, oriģinālo tekstu, rindkopu un lappusi |
+| `teksti/<id>_originals.md` | Oriģinālais teksts ar lappusēm un atsauču sarakstu |
+| `teksti/<id>_klausisanai.txt` | Teksts, kas tika nolasīts |
 
-## Kā to palaist iPhone (apmēram 10 minūtes)
+Lietotnē nospied "Izvēlēties audio un karti", atver mapi Klausisanas un atzīmē **abus** failus (`.m4a` un `.json`).
 
-Mikrofons darbojas tikai drošā (HTTPS) adresē, tāpēc failus vajag mitināt. Bez maksas to var izdarīt GitHub Pages.
+## Teksta sagatavošana
 
-1. Piesakies github.com (ja konta nav, izveido).
-2. Izveido jaunu repozitoriju, piemēram, `klausies`. Tam jābūt publiskam (Public), jo bezmaksas GitHub Pages darbojas publiskiem repozitorijiem. Lietotnē nav neviena tava teksta vai ieraksta, tie glabājas tikai telefonā.
-3. Repozitorijā izvēlies "Add file", tad "Upload files" un augšupielādē četrus failus: `index.html`, `manifest.webmanifest`, `icon-180.png`, `icon-512.png`.
-4. Atver "Settings", tad "Pages". Sadaļā "Branch" izvēlies `main` un mapi `/ (root)`, saglabā.
-5. Pēc 1 līdz 2 minūtēm lapa būs pieejama adresē `https://<tavs-lietotājvārds>.github.io/klausies/`.
-6. Atver šo adresi iPhone Safari, nospied "Kopīgot", tad "Pievienot sākuma ekrānam".
-7. Atver lietotni no sākuma ekrāna ikonas un izvēlies audio failu. Der jebkurš MP3, piemēram, podkāsta epizode vai Natural Reader eksports. Fails saglabājas telefonā, tāpēc automašīnā tas vairs nav jāizvēlas.
-8. Pirmajā piezīmē iPhone jautās atļauju izmantot mikrofonu. Atļauj.
+1. Teksts tiek izvilkts no PDF; galvenes, kājenes un lappušu numuri tiek izņemti, rindkopas savienotas pāri lappusēm.
+2. Atsauču saraksts tiek atdalīts un saglabāts oriģinālā, bet netiek nolasīts.
+3. Noteikumi izņem atsauces iekavās, numurētas atsauces, saites un atšifrē saīsinājumus.
+4. Claude sagatavo katru teikumu izrunai (personvārdi, skaitļi, statistika). Teikumu numerācija saglabājas, tāpēc katrs nolasītais teikums ir sasaistīts ar oriģinālo. Ja Claude versija ir aizdomīgi īsa, tiek izmantota noteikumu versija.
+5. Azure sintezē audio daļās, un laika atzīmes katra teikuma sākumā dod precīzu laika karti.
 
-## Kā pārbaudīt
-
-Lietotnē ir sadaļa "Pārbaudes saraksts" ar astoņām pārbaudēm. Pēc brauciena katrai izvēlies "darbojas", "nedarbojas" vai "daļēji". Tad nospied "Kopēt pārbaudes atskaiti" un ielīmē to sarunā ar Claude. Atskaitē ir arī žurnāls, kurā redzams, cik ātri atveras mikrofons, vai atskaņošana atsākās un vai mainījās audio ierīces.
-
-Ieteicamā pārbaude:
-
-1. Mājās: divas piezīmes ar noklusējuma iestatījumiem.
-2. Automašīnā, telefons turētājā, savienots ar automašīnu: 3 līdz 5 piezīmes, katra 10 līdz 40 sekundes.
-3. Otrajā braucienā iestatījumos ieslēdz "Turēt mikrofonu atvērtu starp piezīmēm" un salīdzini skaņas kvalitāti.
-4. Piezīmes noklausies pēc brauciena. Tās var nosūtīt uz datoru ar "Kopīgot", lai vēlāk izmēģinātu runas atpazīšanu.
-
-## Pogas lietošana
+## Pogas lietošana lietotnē
 
 - Īss spiediens: atskaņošana apstājas, signāls, ieraksts sākas.
 - Vēl viens īss spiediens: ieraksts beidzas, divi signāli, atskaņošana turpinās no vietas 5 sekundes agrāk.
-- Ilgs spiediens ieraksta laikā: piezīme tiek atcelta (divi zemi signāli).
+- Ilgs spiediens ieraksta laikā: piezīme tiek atcelta.
 - Ja pogu aizmirst nospiest: ieraksts beidzas pats pēc 30 sekunžu klusuma vai 5 minūtēm.
 - Datorā: atstarpe sāk vai beidz piezīmi, P atskaņo vai aptur, Esc atceļ.
 
+Ja ir ielādēta laika karte, piezīme tiek piesaistīta teikumam, kas skanēja 3 sekundes pirms pogas spiediena.
+
 ## Drošība
 
-Braucot piezīmei pietiek ar vienu spiedienu uz lielo pogu, kas aizņem pusi ekrāna. Faila izvēli, iestatījumus un pārbaudes saraksta aizpildīšanu dari tikai stāvot.
+Braucot piezīmei pietiek ar vienu spiedienu uz lielo pogu. Failu izvēli un iestatījumus maini tikai stāvot.

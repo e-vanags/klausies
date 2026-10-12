@@ -61,6 +61,9 @@ h1 { font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: v
 .player { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .title { font-weight: 650; font-size: 17px; min-width: 0; overflow-wrap: anywhere; text-wrap: balance; }
 .sub { color: var(--muted); font-size: 13px; }
+.sentence { font-size: 19px; line-height: 1.4; min-height: 2.8em; overflow-wrap: anywhere; border-top: 1px solid var(--line); padding-top: 10px; }
+.sentence .sec { display: block; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.note .quote { font-size: 14px; border-left: 3px solid var(--line); padding-left: 10px; overflow-wrap: anywhere; }
 .times { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
 input[type=range] { width: 100%; accent-color: var(--accent); }
 .controls { display: grid; grid-template-columns: 1fr 1.4fr 1fr auto; gap: 8px; align-items: stretch; }
@@ -133,8 +136,9 @@ pre#log { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1
   <div class="player">
     <div>
       <div id="title" class="title">Nav ielādēts audio</div>
-      <div id="sub" class="sub">Izvēlies MP3 vai citu audio failu. Tas saglabāsies telefonā.</div>
+      <div id="sub" class="sub">Izvēlies audio failu un, ja ir, tā laika karti (JSON). Tie saglabāsies telefonā.</div>
     </div>
+    <div id="sentence" class="sentence" hidden><span class="sec" id="sec"></span><span id="sentText"></span></div>
     <input id="seek" type="range" min="0" max="0" step="1" value="0" aria-label="Vieta audio failā" disabled>
     <div class="times"><span id="cur">0:00</span><span id="dur">0:00</span></div>
     <div class="controls">
@@ -147,8 +151,8 @@ pre#log { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1
       </select>
     </div>
     <div class="filebtn">
-      <label for="file">Izvēlēties audio failu</label>
-      <input id="file" type="file" accept="audio/*,.mp3,.m4a,.wav">
+      <label for="file">Izvēlēties audio un karti</label>
+      <input id="file" type="file" accept="audio/*,.mp3,.m4a,.wav,.json,application/json" multiple>
     </div>
   </div>
 
@@ -337,19 +341,63 @@ let objUrl = null;
 const posKey = () => "klausies.pos:" + (current ? current.name : "");
 let ourPause = false;
 
+/* ---------- laika karte (teikumi) ---------- */
+let tmap = null, lastSi = -2;
+const baseName = (n) => n.replace(/\.[^.]+$/, "");
+const mapFits = () => !!(tmap && current && tmap.id === current.name);
+function findSentence(t) {
+  if (!mapFits()) return -1;
+  const a = tmap.teikumi;
+  let lo = 0, hi = a.length - 1, res = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (a[mid].sakums_s <= t) { res = mid; lo = mid + 1; } else hi = mid - 1; }
+  return res;
+}
+function sectionAt(t) {
+  if (!mapFits() || !tmap.sadalas) return "";
+  let s = "";
+  for (const d of tmap.sadalas) { if (d.sakums_s <= t) s = d.virsraksts; else break; }
+  return s;
+}
+function renderSentence(force) {
+  const box = $("#sentence");
+  if (!mapFits()) { box.hidden = true; return; }
+  box.hidden = false;
+  const si = findSentence(audio.currentTime);
+  if (si === lastSi && !force) return;
+  lastSi = si;
+  const t = si >= 0 ? tmap.teikumi[si] : null;
+  $("#sentText").textContent = t ? (t.orig || t.teksts) : "";
+  const sec = sectionAt(audio.currentTime);
+  $("#sec").textContent = [t && t.virsraksts ? "" : sec, t && t.lappuse ? "lpp. " + t.lappuse : ""].filter(Boolean).join(" · ");
+}
+function sentenceAt(t) {
+  const si = findSentence(t);
+  if (si < 0) return null;
+  const s = tmap.teikumi[si];
+  return { n: s.n, orig: s.orig, teksts: s.teksts, orig_rindkopa: s.orig_rindkopa, orig_teikums: s.orig_teikums, lappuse: s.lappuse, sakums_s: s.sakums_s };
+}
+
+function renderHeader() {
+  if (!current) return;
+  const fits = mapFits();
+  $("#title").textContent = fits ? tmap.nosaukums : current.name;
+  $("#sub").textContent = (current.blob.size / 1048576).toFixed(1).replace(".", ",") + " MB · saglabāts šajā ierīcē" +
+    (fits ? " · " + tmap.teikumi.length + " teikumi" : " · bez laika kartes");
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: fits ? tmap.nosaukums : current.name, artist: "Klausīšanās asistents" });
+  }
+  lastSi = -2; renderSentence(true);
+}
+
 function loadAudio(rec) {
   current = rec;
   if (objUrl) URL.revokeObjectURL(objUrl);
   objUrl = URL.createObjectURL(rec.blob);
   audio.src = objUrl;
   audio.playbackRate = S.rate || 1;
-  $("#title").textContent = rec.name;
-  $("#sub").textContent = (rec.blob.size / 1048576).toFixed(1).replace(".", ",") + " MB · saglabāts šajā ierīcē";
   ["#play", "#back", "#fwd", "#seek"].forEach((s) => ($(s).disabled = false));
-  if ("mediaSession" in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({ title: rec.name, artist: "Klausīšanās asistents" });
-  }
-  log("Ielādēts: " + rec.name + " (" + rec.blob.type + ")");
+  renderHeader();
+  log("Ielādēts: " + rec.name + " (" + rec.blob.type + ")" + (mapFits() ? ", ar laika karti" : ""));
 }
 audio.addEventListener("loadedmetadata", () => {
   $("#seek").max = Math.floor(audio.duration || 0);
@@ -361,6 +409,7 @@ let lastSave = 0;
 audio.addEventListener("timeupdate", () => {
   $("#cur").textContent = fmt(audio.currentTime);
   if (!seeking) $("#seek").value = Math.floor(audio.currentTime);
+  renderSentence();
   if (Date.now() - lastSave > 4000) { lastSave = Date.now(); lsSet(posKey(), audio.currentTime); }
 });
 audio.addEventListener("play", () => { $("#play").textContent = "Pauze"; wake(true); });
@@ -380,12 +429,30 @@ async function playMain(reason) {
 function pauseMain() { if (!audio.paused) { ourPause = true; audio.pause(); } }
 
 $("#file").addEventListener("change", async (e) => {
-  const f = e.target.files && e.target.files[0];
-  if (!f) return;
+  const files = [...(e.target.files || [])];
+  e.target.value = "";
+  if (!files.length) return;
   ensureCtx();
-  const rec = { name: f.name.replace(/\.[^.]+$/, ""), blob: f };
-  try { await kvPut("current", { name: rec.name, blob: f, type: f.type }); } catch (err) { log("Neizdevās saglabāt audio ierīcē: " + err.message); }
-  loadAudio(rec);
+  const jsonF = files.find((f) => /\.json$/i.test(f.name) || f.type === "application/json");
+  const audF = files.find((f) => f !== jsonF && (/^audio\//.test(f.type) || /\.(mp3|m4a|wav|aac)$/i.test(f.name)));
+  if (jsonF) {
+    try {
+      const m = JSON.parse(await jsonF.text());
+      if (!m || !Array.isArray(m.teikumi) || !m.id) throw new Error("tajā nav teikumu");
+      tmap = m;
+      try { await kvPut("map", m); } catch (err) { log("Karti neizdevās saglabāt ierīcē: " + err.message); }
+      log("Laika karte ielādēta: " + m.teikumi.length + " teikumi, " + m.nosaukums);
+    } catch (err) { log("Laika karti neizdevās nolasīt: " + err.message); toast("Šis JSON fails nav laika karte"); }
+  }
+  if (audF) {
+    const rec = { name: baseName(audF.name), blob: audF };
+    try { await kvPut("current", { name: rec.name, blob: audF, type: audF.type }); } catch (err) { log("Neizdevās saglabāt audio ierīcē: " + err.message); }
+    loadAudio(rec);
+  } else if (jsonF) {
+    renderHeader();
+  }
+  if (tmap && current && !mapFits()) toast("Laika karte neatbilst audio failam. Izvēlies abus vienlaikus.");
+  else if (mapFits() && jsonF) toast("Laika karte pievienota");
 });
 $("#play").addEventListener("click", () => { ensureCtx(); audio.paused ? playMain() : (ourPause = false, audio.pause()); });
 $("#back").addEventListener("click", () => (audio.currentTime = Math.max(0, audio.currentTime - 15)));
@@ -406,7 +473,7 @@ if ("mediaSession" in navigator) {
 /* ---------- balss piezīme ---------- */
 let state = "idle"; // idle | starting | recording | stopping
 let stream = null, rec = null, chunks = [];
-let wasPlaying = false, pausePos = 0, recStartedAt = 0, cancelFlag = false, stopReason = "";
+let wasPlaying = false, pausePos = 0, recStartedAt = 0, cancelFlag = false, stopReason = "", noteSentence = null;
 let srcNode = null, analyser = null, levelTimer = null, lastVoice = 0, maxTimer = null, tickTimer = null;
 
 async function startNote() {
@@ -415,6 +482,7 @@ async function startNote() {
   ensureCtx();
   wasPlaying = !audio.paused;
   pausePos = audio.currentTime || 0;
+  noteSentence = current ? sentenceAt(Math.max(0, pausePos - 3)) : null;
   pauseMain();
   beep(BEEP_START);
   const t0 = performance.now();
@@ -469,7 +537,9 @@ async function finishNote() {
   } else {
     const note = {
       id: Date.now(), created: new Date().toISOString(), source: current ? current.name : null,
-      pos: pausePos, anchor: Math.max(0, pausePos - 3), durMs, mime, size: blob.size, reason: stopReason, blob,
+      nosaukums: mapFits() ? tmap.nosaukums : null, apa: mapFits() ? tmap.apa || null : null,
+      pos: pausePos, anchor: noteSentence ? noteSentence.sakums_s : Math.max(0, pausePos - 3),
+      teikums: noteSentence, durMs, mime, size: blob.size, reason: stopReason, blob,
     };
     try { await notePut(note); log("Piezīme saglabāta: " + Math.round(durMs / 1000) + " s, " + Math.round(blob.size / 1024) + " KB, beigas: " + stopReason); }
     catch (e) { log("Piezīmi neizdevās saglabāt: " + e.message); }
@@ -561,7 +631,7 @@ async function renderNotes() {
     const d = new Date(n.created);
     const el = document.createElement("div"); el.className = "note";
     const src = document.createElement("div"); src.className = "src";
-    src.textContent = n.source ? n.source + " · " + fmt(n.pos) : "Brīva doma bez teksta";
+    src.textContent = n.source ? (n.nosaukums || n.source) + " · " + fmt(n.pos) : "Brīva doma bez teksta";
     const meta = document.createElement("div"); meta.className = "meta";
     meta.textContent = d.toLocaleDateString("lv-LV") + " " + d.toLocaleTimeString("lv-LV", { hour: "2-digit", minute: "2-digit" }) +
       " · " + fmt(n.durMs / 1000) + " · " + Math.round(n.size / 1024) + " KB";
@@ -572,7 +642,13 @@ async function renderNotes() {
       mkBtn("Kopīgot", "", () => shareNotes([n])),
       mkDelete(n)
     );
-    el.append(src, meta, row); box.append(el);
+    el.append(src, meta);
+    if (n.teikums) {
+      const q = document.createElement("div"); q.className = "quote";
+      q.textContent = "„" + (n.teikums.orig || n.teikums.teksts) + "”" + (n.teikums.lappuse ? " (lpp. " + n.teikums.lappuse + ")" : "");
+      el.append(q);
+    }
+    el.append(row); box.append(el);
   }
 }
 function mkBtn(label, cls, fn) {
@@ -704,6 +780,7 @@ if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
   const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   log("Atvērts " + (standalone ? "no sākuma ekrāna" : "pārlūkā") + (window.isSecureContext ? "" : ", NAV drošs savienojums, mikrofons nedarbosies"));
   if (!window.MediaRecorder) log("Šis pārlūks neatbalsta balss ierakstu (MediaRecorder)");
+  try { const m = await kvGet("map"); if (m && Array.isArray(m.teikumi)) tmap = m; } catch (e) {}
   try {
     const saved = await kvGet("current");
     if (saved && saved.blob) loadAudio({ name: saved.name, blob: saved.blob });
