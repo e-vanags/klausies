@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="lv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Klausies">
+<meta name="theme-color" content="#101619">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Klausīšanās asistents</title>
+<style>
+/* Izkārtojums: viena ekrāna atskaņotājs, kura lielāko daļu aizņem piezīmju poga; zem tās piezīmes, pārbaudes un žurnāls. */
+:root {
+  --bg: #EEF1EF;
+  --surface: #FFFFFF;
+  --fg: #132026;
+  --muted: #586970;
+  --line: #D5DCDA;
+  --accent: #1E6B5F;
+  --accent-fg: #FFFFFF;
+  --rec: #C33A2B;
+  --rec-soft: #F6DFDB;
+  --ok: #1E6B5F;
+  --bad: #B23A2A;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101619; --surface: #182126; --fg: #E6EDEF; --muted: #8C9DA4; --line: #26323A;
+    --accent: #6DB8A9; --accent-fg: #0B1A17; --rec: #EF5B46; --rec-soft: #3A1E1A;
+    --ok: #6DB8A9; --bad: #EF7A68; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101619; --surface: #182126; --fg: #E6EDEF; --muted: #8C9DA4; --line: #26323A;
+  --accent: #6DB8A9; --accent-fg: #0B1A17; --rec: #EF5B46; --rec-soft: #3A1E1A;
+  --ok: #6DB8A9; --bad: #EF7A68; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 16px; line-height: 1.45;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px calc(env(safe-area-inset-bottom, 0px) + 32px);
+  -webkit-tap-highlight-color: transparent;
+}
+.wrap { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+button, select, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+h1 { font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; font-weight: 700; }
+.pill { font-size: 12px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.on { color: var(--ok); border-color: var(--ok); }
+
+.player { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.title { font-weight: 650; font-size: 17px; min-width: 0; overflow-wrap: anywhere; text-wrap: balance; }
+.sub { color: var(--muted); font-size: 13px; }
+.times { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.controls { display: grid; grid-template-columns: 1fr 1.4fr 1fr auto; gap: 8px; align-items: stretch; }
+.ctl { border: 1px solid var(--line); background: transparent; border-radius: 12px; padding: 12px 6px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.ctl.play { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.ctl:disabled { opacity: .45; }
+select.ctl { padding: 12px 8px; }
+.filebtn { display: flex; gap: 8px; flex-wrap: wrap; }
+.filebtn label { border: 1px dashed var(--line); border-radius: 12px; padding: 10px 12px; font-size: 14px; color: var(--muted); cursor: pointer; }
+.filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+#noteBtn {
+  min-height: 44vh; border-radius: 22px; border: 2px solid var(--accent); background: var(--surface);
+  color: var(--fg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  user-select: none; -webkit-user-select: none; touch-action: manipulation; padding: 20px;
+}
+#noteBtn .big { font-size: 30px; font-weight: 750; letter-spacing: .01em; text-align: center; }
+#noteBtn .small { font-size: 15px; color: var(--muted); text-align: center; max-width: 30ch; }
+#noteBtn.recording { background: var(--rec-soft); border-color: var(--rec); }
+#noteBtn.recording .big { color: var(--rec); }
+#noteBtn.busy { opacity: .7; }
+.dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); }
+#noteBtn.recording .dot { background: var(--rec); }
+@media (prefers-reduced-motion: no-preference) { #noteBtn.recording .dot { animation: pulse 1.2s ease-in-out infinite; } }
+@keyframes pulse { 50% { transform: scale(1.5); opacity: .6; } }
+.meter { width: 70%; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--rec); }
+
+section.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 4px 14px; }
+section.panel > summary { list-style: none; padding: 12px 0; font-weight: 700; display: flex; justify-content: space-between; cursor: pointer; }
+section.panel > summary::-webkit-details-marker { display: none; }
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+.panel-body { padding-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
+.count { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.note { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.note:first-child { border-top: 0; padding-top: 0; }
+.note .meta { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.note .src { font-weight: 600; overflow-wrap: anywhere; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.sbtn { border: 1px solid var(--line); background: transparent; border-radius: 10px; padding: 7px 11px; font-size: 14px; font-weight: 600; }
+.sbtn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.sbtn.danger { color: var(--bad); }
+.empty { color: var(--muted); font-size: 14px; }
+
+.test { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; border-top: 1px solid var(--line); padding-top: 9px; }
+.test:first-child { border-top: 0; padding-top: 0; }
+.test p { margin: 0; font-size: 14px; min-width: 0; }
+.test select { border: 1px solid var(--line); border-radius: 9px; padding: 6px; background: var(--surface); font-size: 13px; }
+.test select.ok { color: var(--ok); border-color: var(--ok); }
+.test select.bad { color: var(--bad); border-color: var(--bad); }
+
+.set { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; font-size: 14px; }
+.set input[type=number] { width: 80px; border: 1px solid var(--line); border-radius: 9px; padding: 6px 8px; background: var(--surface); font-variant-numeric: tabular-nums; }
+.set input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--accent); }
+.hint { font-size: 12.5px; color: var(--muted); margin: -4px 0 0; }
+
+pre#log { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); background: var(--fg); color: var(--bg); padding: 9px 14px; border-radius: 10px; font-size: 14px; max-width: calc(100% - 32px); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Klausīšanās asistents · prototips</h1>
+    <span id="wakePill" class="pill">Ekrāns: nav aktīvs</span>
+  </header>
+
+  <div class="player">
+    <div>
+      <div id="title" class="title">Nav ielādēts audio</div>
+      <div id="sub" class="sub">Izvēlies MP3 vai citu audio failu. Tas saglabāsies telefonā.</div>
+    </div>
+    <input id="seek" type="range" min="0" max="0" step="1" value="0" aria-label="Vieta audio failā" disabled>
+    <div class="times"><span id="cur">0:00</span><span id="dur">0:00</span></div>
+    <div class="controls">
+      <button id="back" class="ctl" disabled aria-label="15 sekundes atpakaļ">−15</button>
+      <button id="play" class="ctl play" disabled>Atskaņot</button>
+      <button id="fwd" class="ctl" disabled aria-label="15 sekundes uz priekšu">+15</button>
+      <select id="rate" class="ctl" aria-label="Ātrums">
+        <option value="0.8">0,8×</option><option value="1" selected>1×</option><option value="1.2">1,2×</option>
+        <option value="1.5">1,5×</option><option value="1.75">1,75×</option><option value="2">2×</option>
+      </select>
+    </div>
+    <div class="filebtn">
+      <label for="file">Izvēlēties audio failu</label>
+      <input id="file" type="file" accept="audio/*,.mp3,.m4a,.wav">
+    </div>
+  </div>
+
+  <button id="noteBtn" aria-live="polite">
+    <span class="dot"></span>
+    <span class="big" id="noteBig">Piezīme</span>
+    <span class="small" id="noteSmall">Nospied, lai runātu. Nospied vēlreiz, kad beidz.</span>
+    <span class="meter" id="meter" hidden><i id="meterBar"></i></span>
+  </button>
+
+  <details class="panel" id="notesPanel" open>
+    <summary>Piezīmes <span class="count" id="noteCount">0</span></summary>
+    <div class="panel-body">
+      <div id="notes"></div>
+      <div class="row">
+        <button class="sbtn primary" id="shareAll">Kopīgot visas piezīmes</button>
+      </div>
+    </div>
+  </details>
+
+  <details class="panel">
+    <summary>Pārbaudes saraksts <span class="count" id="testCount">0/8</span></summary>
+    <div class="panel-body">
+      <div id="tests"></div>
+      <div class="row">
+        <button class="sbtn primary" id="copyReport">Kopēt pārbaudes atskaiti</button>
+      </div>
+      <p class="hint">Atskaiti ielīmē sarunā ar Claude. Tajā ir rezultāti, iestatījumi, ierīces dati un žurnāls.</p>
+    </div>
+  </details>
+
+  <details class="panel">
+    <summary>Iestatījumi</summary>
+    <div class="panel-body">
+      <label class="set"><span>Atkāpe pēc piezīmes, sekundes</span><input id="sRewind" type="number" min="0" max="60" step="1"></label>
+      <label class="set"><span>Automātiskas beigas pēc klusuma, sekundes</span><input id="sSilence" type="number" min="5" max="300" step="5"></label>
+      <label class="set"><span>Maksimālais piezīmes garums, minūtes</span><input id="sMax" type="number" min="1" max="30" step="1"></label>
+      <label class="set"><span>Turēt mikrofonu atvērtu starp piezīmēm</span><input id="sKeepMic" type="checkbox"></label>
+      <p class="hint">Izslēgts: mikrofons tiek atvērts katrai piezīmei atsevišķi, tāpēc atskaņošanas skaņa paliek tīra. Ieslēgts: piezīme sākas ātrāk, bet iPhone var pārslēgt skaņu uz zemāku kvalitāti. Šo tieši vajag pārbaudīt automašīnā.</p>
+      <label class="set"><span>Neļaut ekrānam izslēgties</span><input id="sWake" type="checkbox"></label>
+      <p class="hint">Tastatūrā: atstarpe sāk vai beidz piezīmi, P atskaņo vai aptur, Esc atceļ ierakstu.</p>
+    </div>
+  </details>
+
+  <details class="panel">
+    <summary>Žurnāls</summary>
+    <div class="panel-body">
+      <pre id="log"></pre>
+      <div class="row"><button class="sbtn" id="clearLog">Notīrīt žurnālu</button></div>
+    </div>
+  </details>
+</div>
+
+<audio id="audio" preload="auto" playsinline></audio>
+<audio id="notePlayer" playsinline></audio>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const audio = $("#audio");
+const notePlayer = $("#notePlayer");
+
+/* ---------- iestatījumi un saglabāšana ---------- */
+const DEFAULTS = { rewind: 5, silence: 30, maxMin: 5, keepMic: false, wake: true };
+function lsGet(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+const S = Object.assign({}, DEFAULTS, lsGet("klausies.settings", {}));
+const saveSettings = () => lsSet("klausies.settings", S);
+
+/* ---------- žurnāls ---------- */
+let logLines = lsGet("klausies.log", []);
+function log(msg) {
+  const d = new Date();
+  const t = d.toLocaleTimeString("lv-LV", { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
+  logLines.push(t + "  " + msg);
+  if (logLines.length > 400) logLines = logLines.slice(-400);
+  lsSet("klausies.log", logLines);
+  const el = $("#log");
+  el.textContent = logLines.slice().reverse().join("\n");
+}
+function toast(msg) {
+  const el = $("#toast"); el.textContent = msg; el.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => (el.hidden = true), 2600);
+}
+
+/* ---------- IndexedDB ---------- */
+let dbP = null;
+function idb() {
+  if (dbP) return dbP;
+  dbP = new Promise((res, rej) => {
+    const r = indexedDB.open("klausies", 1);
+    r.onupgradeneeded = () => { const d = r.result; d.createObjectStore("kv"); d.createObjectStore("notes", { keyPath: "id" }); };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  return dbP;
+}
+async function dbDo(store, mode, fn) {
+  const d = await idb();
+  return new Promise((res, rej) => {
+    const t = d.transaction(store, mode);
+    const req = fn(t.objectStore(store));
+    t.oncomplete = () => res(req ? req.result : undefined);
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
+  });
+}
+const kvGet = (k) => dbDo("kv", "readonly", (s) => s.get(k));
+const kvPut = (k, v) => dbDo("kv", "readwrite", (s) => s.put(v, k));
+const notesAll = () => dbDo("notes", "readonly", (s) => s.getAll());
+const notePut = (n) => dbDo("notes", "readwrite", (s) => s.put(n));
+const noteDel = (id) => dbDo("notes", "readwrite", (s) => s.delete(id));
+
+/* ---------- palīgfunkcijas ---------- */
+function fmt(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(s).padStart(2, "0");
+}
+function stamp(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+function extFor(mime) { return /mp4|m4a|aac/.test(mime) ? "m4a" : /webm/.test(mime) ? "webm" : /ogg/.test(mime) ? "ogg" : "wav"; }
+function pickMime() {
+  if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return "";
+  for (const m of ["audio/mp4", "audio/mp4;codecs=mp4a.40.2", "audio/webm;codecs=opus", "audio/webm"]) {
+    if (MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return "";
+}
+
+/* ---------- skaņas signāli ---------- */
+let actx = null;
+function ensureCtx() {
+  try {
+    if (!actx) { const C = window.AudioContext || window.webkitAudioContext; actx = new C(); log("AudioContext izveidots, stāvoklis " + actx.state); }
+    if (actx.state === "suspended") actx.resume();
+  } catch (e) { log("AudioContext kļūda: " + e.message); }
+}
+function beep(freqs, dur = 0.11, gap = 0.06) {
+  if (!actx) return Promise.resolve();
+  return new Promise((res) => {
+    let t = actx.currentTime + 0.01;
+    freqs.forEach((f) => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.28, t + 0.01); g.gain.linearRampToValueAtTime(0, t + dur);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + 0.02);
+      t += dur + gap;
+    });
+    setTimeout(res, (t - actx.currentTime) * 1000 + 20);
+  });
+}
+const BEEP_START = [880], BEEP_SAVED = [660, 990], BEEP_CANCEL = [440, 330], BEEP_ERROR = [300, 300, 300];
+
+/* ---------- ekrāna nomodā turēšana ---------- */
+let wakeLock = null;
+async function wake(on) {
+  try {
+    if (on && S.wake && "wakeLock" in navigator && document.visibilityState === "visible") {
+      if (!wakeLock) {
+        wakeLock = await navigator.wakeLock.request("screen");
+        log("Ekrāns turēts ieslēgts");
+        wakeLock.addEventListener("release", () => { log("Ekrāna turēšana atbrīvota"); wakeLock = null; renderWake(); });
+      }
+    } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (e) { log("Ekrāna turēšana nav pieejama: " + e.name + " " + e.message); }
+  renderWake();
+}
+function renderWake() {
+  const el = $("#wakePill");
+  if (!("wakeLock" in navigator)) { el.textContent = "Ekrāna turēšana nav atbalstīta"; el.className = "pill"; return; }
+  el.textContent = wakeLock ? "Ekrāns paliek ieslēgts" : "Ekrāns: nav aktīvs";
+  el.className = "pill" + (wakeLock ? " on" : "");
+}
+document.addEventListener("visibilitychange", () => {
+  log("Lapa " + (document.visibilityState === "visible" ? "redzama" : "paslēpta") + (audio.paused ? "" : ", audio skan"));
+  if (document.visibilityState === "visible" && (!audio.paused || state === "recording")) wake(true);
+});
+
+/* ---------- audio ielāde un atskaņošana ---------- */
+let current = null; // {name, blob}
+let objUrl = null;
+const posKey = () => "klausies.pos:" + (current ? current.name : "");
+let ourPause = false;
+
+function loadAudio(rec) {
+  current = rec;
+  if (objUrl) URL.revokeObjectURL(objUrl);
+  objUrl = URL.createObjectURL(rec.blob);
+  audio.src = objUrl;
+  audio.playbackRate = S.rate || 1;
+  $("#title").textContent = rec.name;
+  $("#sub").textContent = (rec.blob.size / 1048576).toFixed(1).replace(".", ",") + " MB · saglabāts šajā ierīcē";
+  ["#play", "#back", "#fwd", "#seek"].forEach((s) => ($(s).disabled = false));
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: rec.name, artist: "Klausīšanās asistents" });
+  }
+  log("Ielādēts: " + rec.name + " (" + rec.blob.type + ")");
+}
+audio.addEventListener("loadedmetadata", () => {
+  $("#seek").max = Math.floor(audio.duration || 0);
+  $("#dur").textContent = fmt(audio.duration);
+  const p = lsGet(posKey(), 0);
+  if (p > 0 && p < audio.duration) { audio.currentTime = p; log("Turpina no " + fmt(p)); }
+});
+let lastSave = 0;
+audio.addEventListener("timeupdate", () => {
+  $("#cur").textContent = fmt(audio.currentTime);
+  if (!seeking) $("#seek").value = Math.floor(audio.currentTime);
+  if (Date.now() - lastSave > 4000) { lastSave = Date.now(); lsSet(posKey(), audio.currentTime); }
+});
+audio.addEventListener("play", () => { $("#play").textContent = "Pauze"; wake(true); });
+audio.addEventListener("pause", () => {
+  $("#play").textContent = "Atskaņot"; lsSet(posKey(), audio.currentTime);
+  if (!ourPause && state === "idle") log("Atskaņošana apturēta ārēji (sistēma vai lietotājs) pie " + fmt(audio.currentTime));
+  ourPause = false;
+});
+audio.addEventListener("ended", () => log("Audio beidzies"));
+audio.addEventListener("stalled", () => log("Audio ielāde aizkavējās"));
+audio.addEventListener("error", () => log("Audio kļūda: " + (audio.error ? audio.error.code : "?")));
+
+async function playMain(reason) {
+  try { await audio.play(); if (reason) log("Atskaņošana atsākta (" + reason + ")"); return true; }
+  catch (e) { log("Atskaņošana neatsākās (" + (reason || "poga") + "): " + e.name + " " + e.message); return false; }
+}
+function pauseMain() { if (!audio.paused) { ourPause = true; audio.pause(); } }
+
+$("#file").addEventListener("change", async (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  ensureCtx();
+  const rec = { name: f.name.replace(/\.[^.]+$/, ""), blob: f };
+  try { await kvPut("current", { name: rec.name, blob: f, type: f.type }); } catch (err) { log("Neizdevās saglabāt audio ierīcē: " + err.message); }
+  loadAudio(rec);
+});
+$("#play").addEventListener("click", () => { ensureCtx(); audio.paused ? playMain() : (ourPause = false, audio.pause()); });
+$("#back").addEventListener("click", () => (audio.currentTime = Math.max(0, audio.currentTime - 15)));
+$("#fwd").addEventListener("click", () => (audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 15)));
+$("#rate").addEventListener("change", (e) => { S.rate = +e.target.value; audio.playbackRate = S.rate; saveSettings(); });
+let seeking = false;
+$("#seek").addEventListener("input", (e) => { seeking = true; $("#cur").textContent = fmt(+e.target.value); });
+$("#seek").addEventListener("change", (e) => { audio.currentTime = +e.target.value; seeking = false; });
+
+if ("mediaSession" in navigator) {
+  try {
+    navigator.mediaSession.setActionHandler("play", () => playMain("bloķēšanas ekrāns"));
+    navigator.mediaSession.setActionHandler("pause", () => audio.pause());
+    // Apzināti nereģistrē seekbackward un seekforward (skat. specifikācijas 7. sadaļu).
+  } catch (e) {}
+}
+
+/* ---------- balss piezīme ---------- */
+let state = "idle"; // idle | starting | recording | stopping
+let stream = null, rec = null, chunks = [];
+let wasPlaying = false, pausePos = 0, recStartedAt = 0, cancelFlag = false, stopReason = "";
+let srcNode = null, analyser = null, levelTimer = null, lastVoice = 0, maxTimer = null, tickTimer = null;
+
+async function startNote() {
+  if (state !== "idle") return;
+  state = "starting"; renderNote();
+  ensureCtx();
+  wasPlaying = !audio.paused;
+  pausePos = audio.currentTime || 0;
+  pauseMain();
+  beep(BEEP_START);
+  const t0 = performance.now();
+  try {
+    if (!stream || !stream.active) {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const tr = stream.getAudioTracks()[0];
+      log("Mikrofons atvērts pēc " + Math.round(performance.now() - t0) + " ms: " + (tr ? tr.label || "bez nosaukuma" : "?"));
+    }
+    const mime = pickMime();
+    rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  } catch (e) {
+    log("Mikrofons nav pieejams: " + e.name + " " + e.message);
+    state = "idle"; renderNote(); await beep(BEEP_ERROR);
+    toast("Mikrofons nav pieejams. Pārbaudi atļauju.");
+    if (wasPlaying) playMain("pēc kļūdas");
+    return;
+  }
+  chunks = []; cancelFlag = false; stopReason = "";
+  rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+  rec.onstop = finishNote;
+  rec.onerror = (ev) => log("Ieraksta kļūda: " + (ev.error ? ev.error.message : "?"));
+  rec.start(1000);
+  recStartedAt = Date.now();
+  state = "recording"; renderNote();
+  startLevel();
+  maxTimer = setTimeout(() => stopNote("maksimālais garums"), S.maxMin * 60000);
+  tickTimer = setInterval(renderNote, 500);
+  wake(true);
+  log("Ieraksts sākts, formāts " + (rec.mimeType || "noklusējuma") + ", vieta audio " + fmt(pausePos));
+}
+
+function stopNote(reason, cancel) {
+  if (state !== "recording") return;
+  state = "stopping"; stopReason = reason || "poga"; cancelFlag = !!cancel;
+  clearTimeout(maxTimer); clearInterval(tickTimer); stopLevel();
+  try { rec.stop(); } catch (e) { log("Neizdevās apturēt ierakstu: " + e.message); finishNote(); }
+  renderNote();
+}
+
+async function finishNote() {
+  const durMs = Date.now() - recStartedAt;
+  const mime = (rec && rec.mimeType) || (chunks[0] && chunks[0].type) || "audio/mp4";
+  const blob = new Blob(chunks, { type: mime });
+  if (!S.keepMic && stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; log("Mikrofons aizvērts"); }
+  if (cancelFlag) {
+    log("Piezīme atcelta (" + Math.round(durMs / 1000) + " s)");
+    await beep(BEEP_CANCEL); toast("Piezīme atcelta");
+  } else if (!blob.size) {
+    log("Piezīme tukša, nekas netika ierakstīts");
+    await beep(BEEP_ERROR); toast("Ieraksts ir tukšs");
+  } else {
+    const note = {
+      id: Date.now(), created: new Date().toISOString(), source: current ? current.name : null,
+      pos: pausePos, anchor: Math.max(0, pausePos - 3), durMs, mime, size: blob.size, reason: stopReason, blob,
+    };
+    try { await notePut(note); log("Piezīme saglabāta: " + Math.round(durMs / 1000) + " s, " + Math.round(blob.size / 1024) + " KB, beigas: " + stopReason); }
+    catch (e) { log("Piezīmi neizdevās saglabāt: " + e.message); }
+    await beep(BEEP_SAVED); toast("Piezīme saglabāta");
+    renderNotes();
+  }
+  state = "idle"; renderNote();
+  if (wasPlaying) {
+    audio.currentTime = Math.max(0, pausePos - S.rewind);
+    const t0 = performance.now();
+    const ok = await playMain("pēc piezīmes, " + S.rewind + " s atpakaļ");
+    if (ok) log("Atsākšana aizņēma " + Math.round(performance.now() - t0) + " ms");
+  }
+}
+
+function startLevel() {
+  lastVoice = Date.now();
+  try {
+    srcNode = actx.createMediaStreamSource(stream);
+    analyser = actx.createAnalyser(); analyser.fftSize = 1024;
+    srcNode.connect(analyser);
+  } catch (e) { log("Skaņas līmeņa mērītājs nav pieejams: " + e.message); analyser = null; }
+  const buf = analyser ? new Float32Array(analyser.fftSize) : null;
+  levelTimer = setInterval(() => {
+    let rms = 0;
+    if (analyser) { analyser.getFloatTimeDomainData(buf); for (const v of buf) rms += v * v; rms = Math.sqrt(rms / buf.length); }
+    if (rms > 0.015) lastVoice = Date.now();
+    $("#meterBar").style.width = Math.min(100, rms * 600) + "%";
+    if (analyser && Date.now() - lastVoice > S.silence * 1000) stopNote("klusums " + S.silence + " s");
+  }, 150);
+}
+function stopLevel() {
+  clearInterval(levelTimer);
+  try { if (srcNode) srcNode.disconnect(); } catch (e) {}
+  srcNode = null; analyser = null; $("#meterBar").style.width = "0";
+}
+
+function renderNote() {
+  const b = $("#noteBtn");
+  b.classList.toggle("recording", state === "recording");
+  b.classList.toggle("busy", state === "starting" || state === "stopping");
+  $("#meter").hidden = state !== "recording";
+  if (state === "recording") {
+    $("#noteBig").textContent = "Ieraksta " + fmt((Date.now() - recStartedAt) / 1000);
+    $("#noteSmall").textContent = "Nospied, kad beidz. Turi nospiestu, lai atceltu.";
+  } else if (state === "starting") {
+    $("#noteBig").textContent = "Atver mikrofonu…"; $("#noteSmall").textContent = "";
+  } else if (state === "stopping") {
+    $("#noteBig").textContent = "Saglabā…"; $("#noteSmall").textContent = "";
+  } else {
+    $("#noteBig").textContent = "Piezīme";
+    $("#noteSmall").textContent = "Nospied, lai runātu. Nospied vēlreiz, kad beidz.";
+  }
+}
+
+/* Poga: īss spiediens sāk vai beidz, ilgs spiediens ieraksta laikā atceļ. */
+let pressTimer = null, longPressed = false;
+const noteBtn = $("#noteBtn");
+noteBtn.addEventListener("pointerdown", () => {
+  longPressed = false;
+  if (state === "recording") pressTimer = setTimeout(() => { longPressed = true; stopNote("atcelts", true); }, 800);
+});
+["pointerup", "pointercancel", "pointerleave"].forEach((ev) => noteBtn.addEventListener(ev, () => clearTimeout(pressTimer)));
+noteBtn.addEventListener("click", () => {
+  if (longPressed) { longPressed = false; return; }
+  if (state === "idle") startNote(); else if (state === "recording") stopNote("poga");
+});
+noteBtn.addEventListener("contextmenu", (e) => e.preventDefault());
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.matches("input, select, textarea")) return;
+  if (e.code === "Space") { e.preventDefault(); state === "idle" ? startNote() : stopNote("taustiņš"); }
+  else if (e.key === "p" || e.key === "P") { audio.paused ? playMain() : audio.pause(); }
+  else if (e.key === "Escape" && state === "recording") stopNote("atcelts", true);
+});
+
+/* ---------- piezīmju saraksts ---------- */
+let notesCache = [];
+async function renderNotes() {
+  try { notesCache = (await notesAll()).sort((a, b) => b.id - a.id); } catch (e) { notesCache = []; log("Piezīmes neizdevās nolasīt: " + e.message); }
+  $("#noteCount").textContent = notesCache.length;
+  const box = $("#notes"); box.textContent = "";
+  if (!notesCache.length) {
+    const p = document.createElement("p"); p.className = "empty";
+    p.textContent = "Vēl nav piezīmju. Nospied lielo pogu un pasaki, ko gribi piefiksēt.";
+    box.append(p); return;
+  }
+  for (const n of notesCache) {
+    const d = new Date(n.created);
+    const el = document.createElement("div"); el.className = "note";
+    const src = document.createElement("div"); src.className = "src";
+    src.textContent = n.source ? n.source + " · " + fmt(n.pos) : "Brīva doma bez teksta";
+    const meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = d.toLocaleDateString("lv-LV") + " " + d.toLocaleTimeString("lv-LV", { hour: "2-digit", minute: "2-digit" }) +
+      " · " + fmt(n.durMs / 1000) + " · " + Math.round(n.size / 1024) + " KB";
+    const row = document.createElement("div"); row.className = "row";
+    row.append(
+      mkBtn("Noklausīties", "", () => playNote(n)),
+      ...(n.source && current && n.source === current.name ? [mkBtn("Uz vietu tekstā", "", () => { audio.currentTime = n.anchor; toast("Vieta " + fmt(n.anchor)); })] : []),
+      mkBtn("Kopīgot", "", () => shareNotes([n])),
+      mkDelete(n)
+    );
+    el.append(src, meta, row); box.append(el);
+  }
+}
+function mkBtn(label, cls, fn) {
+  const b = document.createElement("button"); b.className = "sbtn " + cls; b.textContent = label; b.addEventListener("click", fn); return b;
+}
+function mkDelete(n) {
+  const b = mkBtn("Dzēst", "danger", async () => {
+    if (b.dataset.armed) { await noteDel(n.id); log("Piezīme dzēsta"); renderNotes(); return; }
+    b.dataset.armed = "1"; b.textContent = "Tiešām dzēst?";
+    setTimeout(() => { delete b.dataset.armed; b.textContent = "Dzēst"; }, 3000);
+  });
+  return b;
+}
+let noteUrl = null;
+function playNote(n) {
+  pauseMain();
+  if (noteUrl) URL.revokeObjectURL(noteUrl);
+  noteUrl = URL.createObjectURL(n.blob);
+  notePlayer.src = noteUrl;
+  notePlayer.play().catch((e) => log("Piezīmi neizdevās atskaņot: " + e.message));
+}
+function noteFile(n) {
+  const base = "piezime_" + stamp(new Date(n.created)) + (n.source ? "_" + fmt(n.pos).replace(/:/g, "-") : "");
+  return new File([n.blob], base + "." + extFor(n.mime), { type: n.mime });
+}
+function notesJson(list) {
+  const meta = list.map(({ blob, ...m }) => ({ ...m, fails: noteFile({ ...m, blob }).name, vieta: fmt(m.pos), piesaiste: fmt(m.anchor) }));
+  return new File([JSON.stringify({ eksportets: new Date().toISOString(), piezimes: meta }, null, 2)], "piezimes_" + stamp(new Date()) + ".json", { type: "application/json" });
+}
+async function shareNotes(list) {
+  if (!list.length) { toast("Nav piezīmju"); return; }
+  const files = [...list.map(noteFile), notesJson(list)];
+  if (navigator.canShare && navigator.canShare({ files })) {
+    try { await navigator.share({ files, title: "Klausīšanās piezīmes" }); log("Kopīgotas " + list.length + " piezīmes"); return; }
+    catch (e) { if (e.name === "AbortError") return; log("Kopīgošana neizdevās: " + e.message); }
+  }
+  for (const f of files) {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name;
+    document.body.append(a); a.click(); a.remove();
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  log("Lejupielādētas " + list.length + " piezīmes");
+}
+$("#shareAll").addEventListener("click", () => shareNotes(notesCache));
+
+/* ---------- pārbaudes saraksts ---------- */
+const TESTS = [
+  ["t1", "Lietotne atvērta no sākuma ekrāna ikonas, ne Safari cilnē, un audio skan automašīnas skaļruņos"],
+  ["t2", "Pirmais spiediens aptur atskaņošanu un atskan signāls"],
+  ["t3", "Piezīmes ierakstā mana balss braucot ir skaidri saprotama"],
+  ["t4", "Pēc otrā spiediena atskaņošana pati atsākas no nedaudz agrākas vietas"],
+  ["t5", "Pēc piezīmes skaņa paliek automašīnas skaļruņos un tās kvalitāte nepasliktinās"],
+  ["t6", "Ekrāns neizslēdzas vismaz 30 minūšu braucienā"],
+  ["t7", "Ar bloķētu ekrānu atskaņošana turpinās (informācijai, piezīmei tas nav vajadzīgs)"],
+  ["t8", "Pēc lietotnes aizvēršanas un atvēršanas audio, vieta un piezīmes ir saglabātas"],
+];
+const testState = lsGet("klausies.tests", {});
+function renderTests() {
+  const box = $("#tests"); box.textContent = "";
+  let done = 0;
+  for (const [id, text] of TESTS) {
+    const v = testState[id] || "";
+    if (v) done++;
+    const row = document.createElement("label"); row.className = "test";
+    const p = document.createElement("p"); p.textContent = text;
+    const sel = document.createElement("select"); sel.id = "test-" + id;
+    [["", "nav pārbaudīts"], ["ok", "darbojas"], ["bad", "nedarbojas"], ["part", "daļēji"]].forEach(([val, lab]) => {
+      const o = document.createElement("option"); o.value = val; o.textContent = lab; sel.append(o);
+    });
+    sel.value = v; sel.className = v === "ok" ? "ok" : v === "bad" ? "bad" : "";
+    sel.addEventListener("change", () => { testState[id] = sel.value; lsSet("klausies.tests", testState); log("Pārbaude " + id + ": " + (sel.value || "nav pārbaudīts")); renderTests(); });
+    row.append(p, sel); box.append(row);
+  }
+  $("#testCount").textContent = done + "/" + TESTS.length;
+}
+$("#copyReport").addEventListener("click", async () => {
+  const label = { "": "nav pārbaudīts", ok: "darbojas", bad: "nedarbojas", part: "daļēji" };
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const text = [
+    "KLAUSĪŠANĀS ASISTENTS · 1. POSMA PĀRBAUDE",
+    "Datums: " + new Date().toLocaleString("lv-LV"),
+    "Ierīce: " + navigator.userAgent,
+    "Atvērts no sākuma ekrāna: " + (standalone ? "jā" : "nē"),
+    "Ieraksta formāts: " + (pickMime() || "nav noteikts"),
+    "Ekrāna turēšana atbalstīta: " + ("wakeLock" in navigator ? "jā" : "nē"),
+    "Iestatījumi: " + JSON.stringify(S),
+    "Piezīmju skaits: " + notesCache.length,
+    "",
+    "REZULTĀTI",
+    ...TESTS.map(([id, t], i) => (i + 1) + ". " + t + ": " + label[testState[id] || ""]),
+    "",
+    "ŽURNĀLS (jaunākie beigās)",
+    ...logLines.slice(-150),
+  ].join("\n");
+  try { await navigator.clipboard.writeText(text); toast("Atskaite nokopēta"); }
+  catch (e) {
+    const ta = document.createElement("textarea"); ta.value = text; document.body.append(ta); ta.select();
+    try { document.execCommand("copy"); toast("Atskaite nokopēta"); } catch (e2) { toast("Neizdevās nokopēt"); }
+    ta.remove();
+  }
+});
+
+/* ---------- iestatījumu forma ---------- */
+function bindSettings() {
+  const map = { sRewind: "rewind", sSilence: "silence", sMax: "maxMin" };
+  for (const [id, key] of Object.entries(map)) {
+    const el = $("#" + id); el.value = S[key];
+    el.addEventListener("change", () => { const v = +el.value; if (v > 0 || key === "rewind") { S[key] = v; saveSettings(); log("Iestatījums " + key + " = " + v); } });
+  }
+  $("#sKeepMic").checked = S.keepMic;
+  $("#sKeepMic").addEventListener("change", (e) => {
+    S.keepMic = e.target.checked; saveSettings(); log("Mikrofons starp piezīmēm: " + (S.keepMic ? "atvērts" : "aizvērts"));
+    if (!S.keepMic && stream && state === "idle") { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+  });
+  $("#sWake").checked = S.wake;
+  $("#sWake").addEventListener("change", (e) => { S.wake = e.target.checked; saveSettings(); wake(S.wake && !audio.paused); });
+  $("#rate").value = String(S.rate || 1);
+}
+$("#clearLog").addEventListener("click", () => { logLines = []; lsSet("klausies.log", logLines); $("#log").textContent = ""; });
+
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener("devicechange", () => log("Mainījās audio ierīces (piemēram, Bluetooth)"));
+}
+
+/* ---------- sākums ---------- */
+(async function init() {
+  bindSettings(); renderTests(); renderWake(); renderNote();
+  $("#log").textContent = logLines.slice().reverse().join("\n");
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  log("Atvērts " + (standalone ? "no sākuma ekrāna" : "pārlūkā") + (window.isSecureContext ? "" : ", NAV drošs savienojums, mikrofons nedarbosies"));
+  if (!window.MediaRecorder) log("Šis pārlūks neatbalsta balss ierakstu (MediaRecorder)");
+  try {
+    const saved = await kvGet("current");
+    if (saved && saved.blob) loadAudio({ name: saved.name, blob: saved.blob });
+  } catch (e) { log("Saglabāto audio neizdevās nolasīt: " + e.message); }
+  renderNotes();
+  if (navigator.storage && navigator.storage.persist) {
+    try { const p = await navigator.storage.persist(); log("Pastāvīga krātuve: " + (p ? "piešķirta" : "nav piešķirta")); } catch (e) {}
+  }
+})();
+</script>
+</body>
+</html>
