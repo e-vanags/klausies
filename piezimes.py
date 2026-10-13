@@ -284,6 +284,37 @@ def gas(env: dict, darbiba: str, dati: dict) -> dict:
     return atb
 
 
+def lejupieladet_no_google(env: dict, mape: Path) -> int:
+    """Paņem iPhone nosūtītās piezīmes no Google un saglabā tās mapē piezimes."""
+    import base64
+    if not env.get("KLAUSIES_GAS_URL"):
+        return 0
+    kopa, kartas = 0, 0
+    while kartas < 20:
+        kartas += 1
+        atb = gas(env, "sanemt", {"max": 10})
+        lietas = atb.get("piezimes") or []
+        if not lietas:
+            break
+        metas, ids = [], []
+        for it in lietas:
+            n = it.get("piezime") or {}
+            if not n.get("id") or not it.get("audio_base64"):
+                continue
+            ext = "m4a" if "mp4" in (it.get("audio_mime") or "") else (it.get("audio_mime") or "audio/m4a").split("/")[-1].split(";")[0]
+            n["fails"] = f"piezime_{n['id']}.{ext}"
+            (mape / n["fails"]).write_bytes(base64.b64decode(it["audio_base64"]))
+            metas.append(n)
+            ids.append(n["id"])
+        if metas:
+            rakstit_json(mape / f"piezimes_google_{datetime.now():%Y%m%d_%H%M%S}_{kartas}.json", {"piezimes": metas})
+        gas(env, "apstiprinat", {"ids": ids})
+        kopa += len(metas)
+        if not atb.get("vel"):
+            break
+    return kopa
+
+
 # ---------------------------------------------------------------- galvenā daļa
 
 def main(argv: list[str]) -> None:
@@ -304,6 +335,14 @@ def main(argv: list[str]) -> None:
     google = bool(env.get("KLAUSIES_GAS_URL"))
     if not google:
         K.zinot("Google savienojums vēl nav iestatīts, piezīmes saglabāšu tikai failos.")
+
+    if google:
+        try:
+            sk = lejupieladet_no_google(env, mape)
+            if sk:
+                K.zinot(f"No Google saņemtas {sk} piezīmes")
+        except Exception as e:
+            K.zinot(f"Piezīmes no Google neizdevās saņemt: {e}")
 
     registrs_p = mape / "registrs.json"
     registrs = lasit_json(registrs_p, {"apstradatas": {}, "projekti": [], "raksti_google": {}})

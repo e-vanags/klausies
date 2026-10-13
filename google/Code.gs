@@ -27,6 +27,9 @@ function doPost(e) {
       if (d.action === "ping") return atbilde({ ok: true, mape: mape_(SAKNE).getUrl() });
       if (d.action === "raksts") return atbilde({ ok: true, url: rakstaDokuments_(d).getUrl() });
       if (d.action === "piezime") return atbilde({ ok: true, saites: piezime_(d) });
+      if (d.action === "augsupielade") return atbilde(augsupielade_(d));
+      if (d.action === "sanemt") return atbilde(sanemt_(d));
+      if (d.action === "apstiprinat") return atbilde(apstiprinat_(d));
       return atbilde({ ok: false, kluda: "nezināma darbība " + d.action });
     } finally {
       lock.releaseLock();
@@ -250,6 +253,38 @@ function piezime_(d) {
     saites["Lasāmo rinda"] = ldoc.getUrl();
   }
   return saites;
+}
+
+/* ---------- piezīmes no iPhone ---------- */
+
+function ienakosas_() { return mape_("_piezimes_ienakosas", mape_(SAKNE)); }
+function sanemtas_() { return mape_("_piezimes_sanemtas", mape_(SAKNE)); }
+
+function augsupielade_(d) {
+  if (!d.piezime || !d.piezime.id || !d.audio_base64) return { ok: false, kluda: "trūkst piezīmes datu" };
+  var nos = "piezime_" + d.piezime.id + ".json";
+  if (ienakosas_().getFilesByName(nos).hasNext() || sanemtas_().getFilesByName(nos).hasNext()) return { ok: true, jau_bija: true };
+  var saturs = JSON.stringify({ piezime: d.piezime, audio_base64: d.audio_base64, audio_mime: d.audio_mime || "audio/mp4" });
+  ienakosas_().createFile(nos, saturs, MimeType.PLAIN_TEXT);
+  return { ok: true };
+}
+
+function sanemt_(d) {
+  var it = ienakosas_().getFiles(), out = [], max = d.max || 20;
+  while (it.hasNext() && out.length < max) {
+    var f = it.next();
+    try { out.push(JSON.parse(f.getBlob().getDataAsString("UTF-8"))); } catch (e) { /* bojāts fails, izlaižam */ }
+  }
+  return { ok: true, piezimes: out, vel: it.hasNext() };
+}
+
+function apstiprinat_(d) {
+  var merkis = sanemtas_(), n = 0;
+  (d.ids || []).forEach(function (id) {
+    var it = ienakosas_().getFilesByName("piezime_" + id + ".json");
+    while (it.hasNext()) { it.next().moveTo(merkis); n++; }
+  });
+  return { ok: true, parvietotas: n };
 }
 
 /** Palaid šo funkciju vienu reizi redaktorā, lai piešķirtu atļaujas un pārbaudītu, ka viss strādā. */

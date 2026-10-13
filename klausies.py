@@ -952,8 +952,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] in ("piezimes", "piezīmes"):
+    komanda = sys.argv[1] if len(sys.argv) > 1 else ""
+    if komanda in ("piezimes", "piezīmes"):
         import piezimes
         piezimes.main(sys.argv[2:])
+    elif komanda in ("auto", "auto-ieslegt", "auto-izslegt", "savienojums", "statuss"):
+        import auto
+        auto.main(komanda, sys.argv[2:])
     else:
         main()

@@ -85,3 +85,9 @@ KLAUSIES_GAS_SECRET=...
 ```
 
 Pārbaude: `klausies piezimes --tests`
+
+## Automātika (3.1)
+
+- `klausies savienojums` parāda un nokopē savienojuma kodu. iPhone lietotnē: **Savienojums ar Google**, ielīmē kodu, **Saglabāt savienojumu**. Pēc tam katra piezīme pati aiziet uz Google, tiklīdz ir internets.
+- `klausies auto-ieslegt` ieslēdz fona darbu Mac. Ik pēc 10 minūtēm tas paņem jaunās piezīmes no Google un ievieto tās dokumentos. Ja iCloud mapē `Klausisanas/Ienakosie` ievieto PDF, raksts tiek sagatavots automātiski un parādās paziņojums.
+- `klausies statuss` parāda, vai fona darbs strādā, un žurnāla beigas. `klausies auto-izslegt` to izslēdz.

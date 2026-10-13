@@ -130,7 +130,7 @@ pre#log { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1
 <div class="wrap">
   <header>
     <h1>Klausīšanās asistents · prototips</h1>
-    <span id="wakePill" class="pill">Ekrāns: nav aktīvs</span>
+    <span class="row"><span id="gPill" class="pill">Google: nav iestatīts</span><span id="wakePill" class="pill">Ekrāns: nav aktīvs</span></span>
   </header>
 
   <div class="player">
@@ -181,6 +181,16 @@ pre#log { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1
         <button class="sbtn primary" id="copyReport">Kopēt pārbaudes atskaiti</button>
       </div>
       <p class="hint">Atskaiti ielīmē sarunā ar Claude. Tajā ir rezultāti, iestatījumi, ierīces dati un žurnāls.</p>
+    </div>
+  </details>
+
+  <details class="panel" id="gPanel">
+    <summary>Savienojums ar Google</summary>
+    <div class="panel-body">
+      <p class="hint" style="margin:0">Ielīmē savienojuma kodu, ko Mac terminālī parāda komanda <b>klausies savienojums</b>. Pēc tam katra piezīme tiek nosūtīta automātiski, tiklīdz ir internets.</p>
+      <textarea id="gKods" rows="3" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:8px;background:var(--surface);font:inherit;font-size:13px" placeholder="KLAUSIES1|https://script.google.com/...|..."></textarea>
+      <div class="row"><button class="sbtn primary" id="gSaglabat">Saglabāt savienojumu</button><button class="sbtn" id="gParbaudit">Pārbaudīt</button><button class="sbtn danger" id="gNonemt">Atvienot</button></div>
+      <p class="hint" id="gInfo" style="margin:0"></p>
     </div>
   </details>
 
@@ -554,7 +564,8 @@ async function finishNote() {
     try { await notePut(note); log("Piezīme saglabāta: " + Math.round(durMs / 1000) + " s, " + Math.round(blob.size / 1024) + " KB, beigas: " + stopReason); }
     catch (e) { log("Piezīmi neizdevās saglabāt: " + e.message); }
     await beep(BEEP_SAVED); toast("Piezīme saglabāta");
-    renderNotes();
+    await renderNotes();
+    setTimeout(() => sutitRindu(false), 1500);
   }
   state = "idle"; renderNote();
   if (wasPlaying) {
@@ -632,7 +643,8 @@ async function renderNotes() {
   try { notesCache = (await notesAll()).sort((a, b) => b.id - a.id); } catch (e) { notesCache = []; log("Piezīmes neizdevās nolasīt: " + e.message); }
   $("#noteCount").textContent = notesCache.length;
   const nenos = notesCache.filter((n) => !n.nosutita).length;
-  $("#shareAll").textContent = nenos ? "Sūtīt jaunās piezīmes (" + nenos + ")" : "Visas piezīmes nosūtītas";
+  $("#shareAll").textContent = nenos ? (G ? "Sūtīt uz Google tagad (" + nenos + ")" : "Sūtīt jaunās piezīmes (" + nenos + ")") : "Visas piezīmes nosūtītas";
+  renderG();
   const box = $("#notes"); box.textContent = "";
   if (!notesCache.length) {
     const p = document.createElement("p"); p.className = "empty";
@@ -708,12 +720,88 @@ async function shareNotes(list) {
 $("#shareAll").addEventListener("click", async () => {
   const jaunas = notesCache.filter((n) => !n.nosutita);
   if (!jaunas.length) { toast("Visas piezīmes jau ir nosūtītas"); return; }
+  if (G) { await sutitRindu(true); return; }
   if (await shareNotes(jaunas)) {
     for (const n of jaunas) { n.nosutita = true; try { await notePut(n); } catch (e) { log("Neizdevās atzīmēt piezīmi: " + e.message); } }
     toast("Nosūtītas " + jaunas.length + " piezīmes");
     renderNotes();
   }
 });
+
+/* ---------- savienojums ar Google ---------- */
+let G = lsGet("klausies.gas", null);
+let gStatuss = "", gSuta = false;
+function parsetKodu(t) {
+  const m = (t || "").trim().match(/^KLAUSIES1\|(https:\/\/script\.google\.com\/\S+?)\|([A-Za-z0-9]{16,})$/);
+  return m ? { url: m[1], secret: m[2] } : null;
+}
+function renderG() {
+  const p = $("#gPill");
+  const gaida = notesCache.filter((n) => !n.nosutita).length;
+  if (!G) { p.textContent = "Google: nav iestatīts"; p.className = "pill"; }
+  else if (gSuta) { p.textContent = "Google: sūta…"; p.className = "pill on"; }
+  else if (gaida) { p.textContent = "Google: gaida " + gaida; p.className = "pill"; }
+  else { p.textContent = "Google: viss nosūtīts"; p.className = "pill on"; }
+  $("#gInfo").textContent = G ? "Savienots ar " + G.url.slice(0, 48) + "…" + (gStatuss ? " · " + gStatuss : "") : "Savienojums nav iestatīts. Piezīmes var sūtīt arī ar pogu sadaļā Piezīmes.";
+}
+function b64(buf) {
+  const u = new Uint8Array(buf); let s = "";
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+async function gPost(obj) {
+  const r = await fetch(G.url, { method: "POST", body: JSON.stringify(Object.assign({ secret: G.secret }, obj)), headers: { "Content-Type": "text/plain;charset=utf-8" } });
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.kluda || "Google atteica");
+  return j;
+}
+function piezimesMeta(n) {
+  const { blob, ...m } = n;
+  return { ...m, fails: noteFile(n).name, vieta: fmt(m.pos), piesaiste: fmt(m.anchor) };
+}
+async function sutitRindu(rokas) {
+  if (!G || gSuta) return;
+  if (!navigator.onLine) { if (rokas) toast("Nav interneta, piezīmes tiks nosūtītas vēlāk"); return; }
+  const rinda = notesCache.filter((n) => !n.nosutita).sort((a, b) => a.id - b.id);
+  if (!rinda.length) { if (rokas) toast("Visas piezīmes jau ir nosūtītas"); return; }
+  gSuta = true; renderG();
+  let ok = 0;
+  try {
+    for (const n of rinda) {
+      await gPost({ action: "augsupielade", piezime: piezimesMeta(n), audio_base64: b64(await n.blob.arrayBuffer()), audio_mime: n.mime });
+      n.nosutita = true;
+      try { await notePut(n); } catch (e) {}
+      ok++;
+    }
+    gStatuss = "pēdējā sūtīšana " + new Date().toLocaleTimeString("lv-LV", { hour: "2-digit", minute: "2-digit" });
+    log("Nosūtītas uz Google: " + ok);
+    if (rokas) toast("Nosūtītas " + ok + " piezīmes");
+  } catch (e) {
+    gStatuss = "kļūda: " + e.message;
+    log("Sūtīšana uz Google neizdevās: " + e.message);
+    if (rokas) toast("Neizdevās nosūtīt. Mēģināšu vēlreiz vēlāk.");
+  } finally {
+    gSuta = false;
+    renderNotes();
+  }
+}
+$("#gSaglabat").addEventListener("click", () => {
+  const k = parsetKodu($("#gKods").value);
+  if (!k) { toast("Kods nav pareizs. Tam jāsākas ar KLAUSIES1|"); return; }
+  G = k; lsSet("klausies.gas", G); $("#gKods").value = "";
+  log("Savienojums ar Google saglabāts"); toast("Savienojums saglabāts");
+  renderG(); sutitRindu(false);
+});
+$("#gParbaudit").addEventListener("click", async () => {
+  if (!G) { toast("Vispirms ielīmē savienojuma kodu"); return; }
+  try { await gPost({ action: "ping" }); gStatuss = "pārbaude izdevās"; toast("Savienojums darbojas"); }
+  catch (e) { gStatuss = "kļūda: " + e.message; toast("Savienojums nedarbojas"); }
+  renderG();
+});
+$("#gNonemt").addEventListener("click", () => { G = null; lsSet("klausies.gas", null); gStatuss = ""; renderG(); renderNotes(); toast("Atvienots"); });
+window.addEventListener("online", () => sutitRindu(false));
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sutitRindu(false); });
+setInterval(() => sutitRindu(false), 120000);
 
 /* ---------- pārbaudes saraksts ---------- */
 const TESTS = [
@@ -806,7 +894,9 @@ if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
     const saved = await kvGet("current");
     if (saved && saved.blob) loadAudio({ name: saved.name, blob: saved.blob });
   } catch (e) { log("Saglabāto audio neizdevās nolasīt: " + e.message); }
-  renderNotes();
+  if (!G) $("#gPanel").open = true;
+  await renderNotes();
+  sutitRindu(false);
   if (navigator.storage && navigator.storage.persist) {
     try { const p = await navigator.storage.persist(); log("Pastāvīga krātuve: " + (p ? "piešķirta" : "nav piešķirta")); } catch (e) {}
   }
