@@ -40,7 +40,7 @@ from datetime import date, datetime
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
-VERSIJA = "0.2.0"
+VERSIJA = "0.2.2"
 ENV_FILE = Path.home() / ".config" / "klausies" / "env"
 ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 SAMPLE_RATE = 24000
@@ -74,6 +74,7 @@ class Rindkopa:
     teksts: str
     lappuse: int | None = None
     virsraksts: bool = False
+    izlaist: str | None = None   # "meta" vai "kods": paliek oriģinālā, netiek nolasīts
 
 
 @dataclass
@@ -86,6 +87,7 @@ class Teikums:
     klausisanai: str = ""
     virsraksts: bool = False
     rindkopas_beigas: bool = False
+    izlaist: str | None = None
     sakums_s: float = 0.0
     beigas_s: float = 0.0
 
@@ -162,6 +164,49 @@ def noteikt_valodu(teksts: str) -> str:
 
 # ---------------------------------------------------------------- izvilkšana
 
+MONO_FONTS = re.compile(r"consolas|courier|mono|menlo|inconsolata|sourcecode|lucida ?console|monaco", re.I)
+META_RE = re.compile(
+    r"creative commons|this (article|work) is (distributed|licensed)|all rights reserved|©|\bcopyright\b|"
+    r"^corresponding author|^e-?mail\b|[\w.+-]+@[\w-]+\.[\w.]+|^received\b.*\d|revision accepted|^accepted\b|"
+    r"published online|first published|^keywords?\b|^atslēgvārdi|^action editor|^handling editor|^orcid\b|"
+    r"^article reuse guidelines|^sagepub\.com|journals\.sagepub|^https?://doi\.org/\S+$", re.I)
+BACK_RE = re.compile(
+    r"^\s*(\d+[.\s]*)?(transparency|author contributions?|contributions|declaration of conflicting interests|"
+    r"conflicts? of interests?|competing interests|funding|acknowledg(e)?ments?|open practices|orcid i?ds?|"
+    r"supplemental material|supplementary materials?|data availability( statement)?|ethics statement|"
+    r"prior versions|pateicības|finansējums|interešu konflikts|autoru ieguldījums)\s*:?\s*$", re.I)
+
+
+def _formulas_fragments(t: str, chars: int) -> bool:
+    """Īss bloks bez īstiem vārdiem, piemēram, formulas daļa vai tabulas šūna ar simboliem."""
+    if chars >= 40:
+        return False
+    return not re.search(r"[a-zāčēģīķļņšūž]{4,}", t, re.I) or bool(re.fullmatch(r"[\s\W\d\w]{0,12}\(\d+\)\s*", t) and chars < 25 and not re.search(r"[a-z]{5,}", t))
+
+
+def _lasisanas_seciba(bloki: list[dict], W: float) -> list[dict]:
+    """Kārto lapas blokus lasīšanas secībā: pilna platuma bloki sadala lapu joslās, katrā joslā vispirms kreisā, tad labā sleja."""
+    def veids(b):
+        x0, x1 = b["x0"], b["x1"]
+        if x1 - x0 > 0.6 * W or (x0 < 0.42 * W and x1 > 0.58 * W):
+            return "pilns"
+        return "kreisa" if (x0 + x1) / 2 < W / 2 else "laba"
+    for b in bloki:
+        b["veids"] = veids(b)
+    pilni = sorted([b for b in bloki if b["veids"] == "pilns"], key=lambda b: b["y0"])
+    slejas = [b for b in bloki if b["veids"] != "pilns"]
+    rez, robezas = [], [p["y0"] for p in pilni] + [float("inf")]
+    iepr = float("-inf")
+    for i, robeza in enumerate(robezas):
+        josla = [b for b in slejas if iepr <= (b["y0"] + b["y1"]) / 2 < robeza]
+        rez += sorted([b for b in josla if b["veids"] == "kreisa"], key=lambda b: b["y0"])
+        rez += sorted([b for b in josla if b["veids"] == "laba"], key=lambda b: b["y0"])
+        if i < len(pilni):
+            rez.append(pilni[i])
+            iepr = pilni[i]["y0"]
+    return rez
+
+
 def izvilkt_pdf(cels: Path) -> Dokuments:
     try:
         import pymupdf as fitz
@@ -176,11 +221,12 @@ def izvilkt_pdf(cels: Path) -> Dokuments:
     meta = doc.metadata or {}
     bloki = []
     for pno, page in enumerate(doc, 1):
-        h = page.rect.height
+        W, H = page.rect.width, page.rect.height
+        lapas = []
         for b in page.get_text("dict")["blocks"]:
             if b.get("type") != 0:
                 continue
-            lines, sizes, bold, total = [], [], 0, 0
+            lines, sizes, bold, mono, total = [], [], 0, 0, 0
             for ln in b["lines"]:
                 t = "".join(s["text"] for s in ln["spans"])
                 if t.strip():
@@ -191,20 +237,25 @@ def izvilkt_pdf(cels: Path) -> Dokuments:
                         continue
                     sizes.append((s["size"], n))
                     total += n
-                    if "bold" in s["font"].lower() or (s["flags"] & 16):
+                    if "bold" in s["font"].lower() or re.search(r"-B[dl]|Bd", s["font"]) or (s["flags"] & 16):
                         bold += n
+                    if MONO_FONTS.search(s["font"]):
+                        mono += n
             if not lines:
                 continue
-            size = sum(a * b for a, b in sizes) / max(1, sum(b for _, b in sizes))
-            bloki.append({
-                "lines": lines, "teksts": savienot_rindas(lines), "page": pno,
-                "y0": b["bbox"][1] / h, "y1": b["bbox"][3] / h,
-                "size": size, "bold": bold / max(total, 1), "chars": total,
+            size = sum(a * c for a, c in sizes) / max(1, sum(c for _, c in sizes))
+            kods = total and mono / total > 0.6
+            lapas.append({
+                "lines": lines, "teksts": ("\n".join(l.strip() for l in lines) if kods else savienot_rindas(lines)),
+                "page": pno, "x0": b["bbox"][0], "x1": b["bbox"][2],
+                "y0": b["bbox"][1] / H, "y1": b["bbox"][3] / H,
+                "size": size, "bold": bold / max(total, 1), "chars": total, "kods": bool(kods),
             })
+        bloki += _lasisanas_seciba(lapas, W)
     lpp_skaits = len(doc)
     first_pages_text = " ".join(b["teksts"] for b in bloki if b["page"] <= 2)
 
-    # galvenes, kājenes un lappušu numuri
+    # galvenes, kājenes, lappušu numuri, formulu un tabulu fragmenti
     def atslega(t: str) -> str:
         return re.sub(r"\d+", "#", t.lower()).strip()
     malas = Counter(atslega(b["teksts"]) for b in bloki if (b["y0"] < 0.09 or b["y1"] > 0.91) and b["chars"] < 160)
@@ -213,34 +264,77 @@ def izvilkt_pdf(cels: Path) -> Dokuments:
     for b in bloki:
         t = b["teksts"]
         mala = b["y0"] < 0.09 or b["y1"] > 0.91
+        if b["y1"] < 0.035:
+            continue
         if re.fullmatch(r"[\d\s\-–|/.]*(page|lpp\.?|p\.)?[\d\s\-–|/.]*(of|no)?[\d\s]*", t, re.I) and len(t) < 20:
             continue
         if mala and b["chars"] < 160 and malas[atslega(t)] >= robeza:
+            continue
+        if not b["kods"] and _formulas_fragments(t, b["chars"]):
             continue
         tirie.append(b)
 
     pamata = []
     for b in tirie:
-        pamata.extend([round(b["size"], 1)] * b["chars"])
+        if not b["kods"]:
+            pamata.extend([round(b["size"], 1)] * b["chars"])
     pamata_izm = statistics.median(pamata) if pamata else 10.0
 
+    # pirmā lappuse: viss pirms kopsavilkuma, izņemot nosaukumu, ir tehniska informācija
+    pirma = [b for b in tirie if b["page"] == 1]
+    titls_b = max(pirma, key=lambda b: (b["size"], b["chars"] > 10), default=None)
+    kops = next((b for b in pirma if re.match(r"^\s*(abstract|kopsavilkums|anotācija|summary)\b", b["teksts"], re.I)), None)
+    pirms_kops = set()
+    if kops is not None:
+        for b in pirma:
+            if b is kops:
+                break
+            if b is not titls_b:
+                pirms_kops.add(id(b))
+
     rindkopas: list[Rindkopa] = []
+    beigu_dala = False
+    tabula = False
     for b in tirie:
         t = b["teksts"]
+        if re.match(r"^\s*(table|tabula)\s+\d+[.:]", t, re.I):
+            tabula = True
+            rindkopas.append(Rindkopa(t, b["page"], False, None))
+            continue
+        if tabula:
+            if b["chars"] < 80 or re.match(r"^\s*(note|piezīme)s?\b", t, re.I):
+                rindkopas.append(Rindkopa(t, b["page"], False, "tabula"))
+                continue
+            tabula = False
+        if b["kods"]:
+            if rindkopas and rindkopas[-1].izlaist == "kods":
+                rindkopas[-1].teksts += "\n" + t
+            else:
+                rindkopas.append(Rindkopa(t, b["page"], False, "kods"))
+            continue
         ir_virsraksts = (
             b["chars"] < 140 and not re.search(r"[.,;:]$", t)
             and (b["size"] >= pamata_izm * 1.12 or b["bold"] > 0.6)
             and not t[:1].islower()
-        )
-        if rindkopas and not ir_virsraksts and not rindkopas[-1].virsraksts:
-            prev = rindkopas[-1]
-            if not re.search(r"[.!?:\"”’)\]]$", prev.teksts) and t[:1].islower():
+        ) or b is titls_b
+        if ir_virsraksts:
+            beigu_dala = bool(BACK_RE.match(t))
+        izlaist = None
+        if id(b) in pirms_kops or META_RE.search(t[:300]) or beigu_dala:
+            izlaist = "meta"
+        if izlaist is None and not ir_virsraksts and t[:1].islower():
+            # turpinājums: pievieno pēdējai lasāmajai rindkopai, ja tā nebeidzas ar teikuma beigām
+            prev = next((r for r in reversed(rindkopas) if r.izlaist is None and not r.virsraksts
+                         and not re.match(r"^\s*(table|tabula)\s+\d+[.:]", r.teksts, re.I)), None)
+            last_real = next((r for r in reversed(rindkopas) if r.izlaist is None
+                              and not re.match(r"^\s*(table|tabula)\s+\d+[.:]", r.teksts, re.I)), None)
+            if prev is not None and prev is last_real and not re.search(r"[.!?:\"”’)\]]$", prev.teksts):
                 if prev.teksts.endswith("-") and prev.teksts[-2:-1].isalpha():
                     prev.teksts = prev.teksts[:-1] + t
                 else:
                     prev.teksts += " " + t
                 continue
-        rindkopas.append(Rindkopa(t, b["page"], ir_virsraksts))
+        rindkopas.append(Rindkopa(t, b["page"], ir_virsraksts, izlaist))
 
     doi = None
     m = re.search(r"\b(10\.\d{4,9}/[^\s\"<>,;]+[^\s\"<>,;.)\]])", first_pages_text)
@@ -367,11 +461,11 @@ def sadalit_teikumos(t: str) -> list[str]:
 def veidot_teikumus(doc: Dokuments) -> list[Teikums]:
     res, n = [], 0
     for ri, r in enumerate(doc.rindkopas, 1):
-        daļas = [r.teksts] if r.virsraksts else sadalit_teikumos(r.teksts)
+        daļas = [r.teksts] if (r.virsraksts or r.izlaist) else sadalit_teikumos(r.teksts)
         for ti, s in enumerate(daļas, 1):
             n += 1
             res.append(Teikums(n=n, rindkopa=ri, teikums=ti, lappuse=r.lappuse, orig=s,
-                               virsraksts=r.virsraksts, rindkopas_beigas=(ti == len(daļas))))
+                               virsraksts=r.virsraksts, rindkopas_beigas=(ti == len(daļas)), izlaist=r.izlaist))
     return res
 
 
@@ -423,6 +517,9 @@ def klausisanai_noteikumi(s: str, valoda: str) -> str:
 
 # ---------------------------------------------------------------- klausīšanās teksts: Claude
 
+TABULAS_PIEZIME = {"lv": "Tabulas saturs ir izlaists.", "en": "The table content is skipped."}
+KODA_PIEZIME = {"lv": "Šeit rakstā ir programmas koda piemērs.", "en": "Here the article shows a code example."}
+
 CLAUDE_INSTR = {
     "lv": """Tu sagatavo zinātniska teksta teikumus nolasīšanai ar latviešu runas sintezatoru.
 Katram teikumam atgriez klausīšanās versiju. Noteikumi:
@@ -432,14 +529,16 @@ Katram teikumam atgriez klausīšanās versiju. Noteikumi:
 4. Svešus personvārdus un vietvārdus raksti latviskā izrunas formā ("Lakens", "Kahnemans"), oriģinālrakstību iekavās izņem.
 5. Angliskos terminus un saīsinājumus, ja tos nolasītu nepareizi, aizstāj ar latvisku izrunājamu formu ("PISA" paliek "PISA", "OECD" kļūst par "O E C D", "R software" kļūst par "programma R").
 6. Skaitļus, procentus, statistiskos simbolus un formulas raksti tā, lai tos varētu skaidri izrunāt ("p < 0,05" kļūst par "p mazāks par nulle komats nulle pieci"; "M = 3,2" kļūst par "vidējais trīs komats divi"; "95 % TI" kļūst par "deviņdesmit piecu procentu ticamības intervāls").
-7. Ja teikums ir tikai atsauce, tabulas fragments vai cits nenolasāms teksts, atgriez tukšu virkni.""",
+7. Ja teikums ir tikai atsauce, tabulas fragments, formulas fragments, programmas kods vai izvade, autoru afiliācija, žurnāla vai licences informācija, atgriez tukšu virkni.
+8. Ja teikumā ir formulas atliekas (atsevišķi burti vai simboli, kas palikuši no formulas), izņem tās, bet saglabā teikuma vārdus.""",
     "en": """You prepare sentences of a scientific text for an English text to speech voice.
 Return a listening version of every sentence. Rules:
 1. Do not change, shorten, paraphrase or comment on the content. Keep meaning and word order as far as possible.
 2. Remove parenthetical citations (e.g. "(Smith et al., 2017)"), numbered citations ([12]), URLs and DOIs.
 3. Expand abbreviations ("e.g." to "for example", "i.e." to "that is", "et al." to "and colleagues").
 4. Write numbers, percentages, statistical symbols and formulas so they can be spoken clearly ("p < .05" becomes "p less than point zero five"; "M = 3.2, SD = 1.1" becomes "mean three point two, standard deviation one point one"; "95% CI" becomes "ninety five percent confidence interval").
-5. If a sentence is only a citation, a table fragment or otherwise unreadable, return an empty string.""",
+5. If a sentence is only a citation, a table fragment, a formula fragment, program code or output, an author affiliation, journal or license information, return an empty string.
+6. If a sentence contains leftovers of a formula (isolated letters or symbols left from an equation), remove them but keep the words of the sentence.""",
 }
 
 
@@ -491,7 +590,7 @@ def claude_sagatavot(teikumi: list[Teikums], valoda: str, atslega: str, modelis:
 
     simboli = 0
     for t in teikumi:
-        if t.virsraksts:
+        if t.virsraksts or t.izlaist or not t.klausisanai:
             continue
         partija.append(t)
         simboli += len(t.orig)
@@ -644,7 +743,10 @@ def originals_md(doc: Dokuments, apa: str | None, teikumi: list[Teikums]) -> str
         if r.lappuse and r.lappuse != lpp:
             out += [f"[lpp. {r.lappuse}]", ""]
             lpp = r.lappuse
-        out += [(f"## {r.teksts}" if r.virsraksts else r.teksts) + f" <!-- r{i} -->", ""]
+        if r.izlaist == "kods":
+            out += ["```", r.teksts, "```" + f" <!-- r{i} -->", ""]
+        else:
+            out += [(f"## {r.teksts}" if r.virsraksts else r.teksts) + f" <!-- r{i} -->", ""]
     if doc.atsauces:
         out += ["## Atsauču saraksts (oriģināls)", ""]
         out += [r.teksts for r in doc.atsauces]
@@ -720,10 +822,18 @@ def main() -> None:
 
     teikumi = veidot_teikumus(doc)
     for t in teikumi:
-        if t.virsraksts:
-            t.klausisanai = "" if REF_HEADINGS.match(t.orig) else t.orig
+        if t.izlaist == "meta":
+            t.klausisanai = ""
+        elif t.izlaist == "kods":
+            t.klausisanai = KODA_PIEZIME[valoda]
+        elif t.izlaist == "tabula":
+            iepr = teikumi[t.n - 2] if t.n > 1 else None
+            t.klausisanai = "" if (iepr and iepr.izlaist == "tabula") else TABULAS_PIEZIME[valoda]
+        elif t.virsraksts:
+            t.klausisanai = "" if (REF_HEADINGS.match(t.orig) or BACK_RE.match(t.orig)) else t.orig
         else:
-            t.klausisanai = klausisanai_noteikumi(t.orig, valoda)
+            t.klausisanai = re.sub(r"^(Abstract|Kopsavilkums|Anotācija)\s+(?=[A-ZĀČĒĢĪĶĻŅŠŪŽ])", r"\1. ",
+                                   klausisanai_noteikumi(t.orig, valoda))
     zinot(f"  Valoda: {valoda}; rindkopas: {len(doc.rindkopas)}; teikumi: {len(teikumi)}; "
           f"atsauču saraksts: {len(doc.atsauces)} ieraksti")
 
@@ -767,7 +877,8 @@ def main() -> None:
 
     zinot(f"Veidoju audio ar balsi {balss_nos}")
     pcm = sintezet_visu(teikumi, balss)
-    audio_cels = saglabat_audio(pcm, mape / tid)
+    (mape / "audio").mkdir(parents=True, exist_ok=True)
+    audio_cels = saglabat_audio(pcm, mape / "audio" / tid)
     ilgums = len(pcm) / (2 * SAMPLE_RATE)
 
     sadalas = [{"virsraksts": t.orig, "sakums_s": t.sakums_s, "n": t.n} for t in teikumi if t.virsraksts and t.klausisanai]
@@ -783,13 +894,18 @@ def main() -> None:
             "lappuse": t.lappuse, "virsraksts": t.virsraksts,
         } for t in teikumi if t.klausisanai],
     }
+    # viens fails lietotnei: laika karte kopā ar audio
+    import base64
+    mime = {".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}[audio_cels.suffix]
+    karte["audio_mime"] = mime
+    karte["audio_base64"] = base64.b64encode(audio_cels.read_bytes()).decode("ascii")
     (mape / f"{tid}.json").write_text(json.dumps(karte, ensure_ascii=False, indent=1), encoding="utf-8")
     atjaunot_katalogu(mape, {"id": tid, "nosaukums": doc.nosaukums, "audio": audio_cels.name,
                              "karte": f"{tid}.json", "ilgums_s": round(ilgums, 1), "valoda": valoda})
 
     zinot(f"\nGatavs. Ilgums {fmt_laiks(ilgums)}.")
-    zinot(f"  Audio:  {audio_cels}")
-    zinot(f"  Karte:  {mape / (tid + '.json')}")
+    zinot(f"  Fails lietotnei: {mape / (tid + '.json')}")
+    zinot(f"  Audio atsevišķi: {audio_cels}")
     zinot(f"  Teksti: {mape / 'teksti'}")
     if str(mape).startswith(str(ICLOUD)):
         zinot("  Faili ir iCloud Drive mapē Klausisanas, iPhone tie būs redzami lietotnē Faili.")

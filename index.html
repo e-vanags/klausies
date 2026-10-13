@@ -136,7 +136,7 @@ pre#log { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1
   <div class="player">
     <div>
       <div id="title" class="title">Nav ielādēts audio</div>
-      <div id="sub" class="sub">Izvēlies audio failu un, ja ir, tā laika karti (JSON). Tie saglabāsies telefonā.</div>
+      <div id="sub" class="sub">Izvēlies raksta failu no mapes Klausisanas. Tas saglabāsies telefonā.</div>
     </div>
     <div id="sentence" class="sentence" hidden><span class="sec" id="sec"></span><span id="sentText"></span></div>
     <input id="seek" type="range" min="0" max="0" step="1" value="0" aria-label="Vieta audio failā" disabled>
@@ -151,7 +151,7 @@ pre#log { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1
       </select>
     </div>
     <div class="filebtn">
-      <label for="file">Izvēlēties audio un karti</label>
+      <label for="file">Izvēlēties rakstu</label>
       <input id="file" type="file" accept="audio/*,.mp3,.m4a,.wav,.json,application/json" multiple>
     </div>
   </div>
@@ -435,16 +435,26 @@ $("#file").addEventListener("change", async (e) => {
   ensureCtx();
   const jsonF = files.find((f) => /\.json$/i.test(f.name) || f.type === "application/json");
   const audF = files.find((f) => f !== jsonF && (/^audio\//.test(f.type) || /\.(mp3|m4a|wav|aac)$/i.test(f.name)));
+  let iebuvetais = null;
   if (jsonF) {
     try {
+      $("#sub").textContent = "Atveru failu…";
       const m = JSON.parse(await jsonF.text());
       if (!m || !Array.isArray(m.teikumi) || !m.id) throw new Error("tajā nav teikumu");
+      if (m.audio_base64) {
+        const r = await fetch("data:" + (m.audio_mime || "audio/mp4") + ";base64," + m.audio_base64);
+        iebuvetais = await r.blob();
+        delete m.audio_base64;
+        log("Audio izvilkts no faila: " + (iebuvetais.size / 1048576).toFixed(1) + " MB");
+      }
       tmap = m;
       try { await kvPut("map", m); } catch (err) { log("Karti neizdevās saglabāt ierīcē: " + err.message); }
       log("Laika karte ielādēta: " + m.teikumi.length + " teikumi, " + m.nosaukums);
     } catch (err) { log("Laika karti neizdevās nolasīt: " + err.message); toast("Šis JSON fails nav laika karte"); }
   }
-  if (audF) {
+  const audioAvots = audF || (iebuvetais && tmap ? new File([iebuvetais], tmap.id + ".m4a", { type: iebuvetais.type }) : null);
+  if (audioAvots) {
+    const audF = audioAvots;
     const rec = { name: baseName(audF.name), blob: audF };
     try { await kvPut("current", { name: rec.name, blob: audF, type: audF.type }); } catch (err) { log("Neizdevās saglabāt audio ierīcē: " + err.message); }
     loadAudio(rec);
