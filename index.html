@@ -168,7 +168,7 @@ pre#log { margin: 0; font-family: var(--mono); font-size: 11.5px; line-height: 1
     <div class="panel-body">
       <div id="notes"></div>
       <div class="row">
-        <button class="sbtn primary" id="shareAll">Kopīgot visas piezīmes</button>
+        <button class="sbtn primary" id="shareAll">Sūtīt jaunās piezīmes</button>
       </div>
     </div>
   </details>
@@ -631,6 +631,8 @@ let notesCache = [];
 async function renderNotes() {
   try { notesCache = (await notesAll()).sort((a, b) => b.id - a.id); } catch (e) { notesCache = []; log("Piezīmes neizdevās nolasīt: " + e.message); }
   $("#noteCount").textContent = notesCache.length;
+  const nenos = notesCache.filter((n) => !n.nosutita).length;
+  $("#shareAll").textContent = nenos ? "Sūtīt jaunās piezīmes (" + nenos + ")" : "Visas piezīmes nosūtītas";
   const box = $("#notes"); box.textContent = "";
   if (!notesCache.length) {
     const p = document.createElement("p"); p.className = "empty";
@@ -644,7 +646,7 @@ async function renderNotes() {
     src.textContent = n.source ? (n.nosaukums || n.source) + " · " + fmt(n.pos) : "Brīva doma bez teksta";
     const meta = document.createElement("div"); meta.className = "meta";
     meta.textContent = d.toLocaleDateString("lv-LV") + " " + d.toLocaleTimeString("lv-LV", { hour: "2-digit", minute: "2-digit" }) +
-      " · " + fmt(n.durMs / 1000) + " · " + Math.round(n.size / 1024) + " KB";
+      " · " + fmt(n.durMs / 1000) + " · " + (n.nosutita ? "nosūtīta" : "vēl nav nosūtīta");
     const row = document.createElement("div"); row.className = "row";
     row.append(
       mkBtn("Noklausīties", "", () => playNote(n)),
@@ -692,8 +694,8 @@ async function shareNotes(list) {
   if (!list.length) { toast("Nav piezīmju"); return; }
   const files = [...list.map(noteFile), notesJson(list)];
   if (navigator.canShare && navigator.canShare({ files })) {
-    try { await navigator.share({ files, title: "Klausīšanās piezīmes" }); log("Kopīgotas " + list.length + " piezīmes"); return; }
-    catch (e) { if (e.name === "AbortError") return; log("Kopīgošana neizdevās: " + e.message); }
+    try { await navigator.share({ files, title: "Klausīšanās piezīmes" }); log("Kopīgotas " + list.length + " piezīmes"); return true; }
+    catch (e) { if (e.name === "AbortError") return false; log("Kopīgošana neizdevās: " + e.message); }
   }
   for (const f of files) {
     const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name;
@@ -701,8 +703,17 @@ async function shareNotes(list) {
     await new Promise((r) => setTimeout(r, 300));
   }
   log("Lejupielādētas " + list.length + " piezīmes");
+  return true;
 }
-$("#shareAll").addEventListener("click", () => shareNotes(notesCache));
+$("#shareAll").addEventListener("click", async () => {
+  const jaunas = notesCache.filter((n) => !n.nosutita);
+  if (!jaunas.length) { toast("Visas piezīmes jau ir nosūtītas"); return; }
+  if (await shareNotes(jaunas)) {
+    for (const n of jaunas) { n.nosutita = true; try { await notePut(n); } catch (e) { log("Neizdevās atzīmēt piezīmi: " + e.message); } }
+    toast("Nosūtītas " + jaunas.length + " piezīmes");
+    renderNotes();
+  }
+});
 
 /* ---------- pārbaudes saraksts ---------- */
 const TESTS = [

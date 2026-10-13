@@ -40,8 +40,14 @@ from datetime import date, datetime
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
-VERSIJA = "0.2.2"
+VERSIJA = "0.3.1"
 ENV_FILE = Path.home() / ".config" / "klausies" / "env"
+KESA = Path.home() / ".cache" / "klausies"
+
+
+def kesa_atslega(*daļas: str) -> str:
+    import hashlib
+    return hashlib.sha256("\x1f".join(daļas).encode("utf-8")).hexdigest()[:32]
 ICLOUD = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
 SAMPLE_RATE = 24000
 
@@ -550,14 +556,23 @@ def claude_sagatavot(teikumi: list[Teikums], valoda: str, atslega: str, modelis:
         uzd = (CLAUDE_INSTR[valoda] + "\n\nAtbildi tikai ar JSON masīvu formā "
                '[{"n": 1, "teksts": "..."}], ar tiem pašiem n un tādā pašā secībā.\n\n'
                + json.dumps(dati, ensure_ascii=False))
+        kesa_f = KESA / "claude" / (kesa_atslega(modelis, uzd) + ".json")
+        resp = None
+        if kesa_f.exists():
+            try:
+                resp = json.loads(kesa_f.read_text(encoding="utf-8"))
+            except Exception:
+                resp = None
         body = json.dumps({"model": modelis, "max_tokens": 8000,
                            "messages": [{"role": "user", "content": uzd}]}).encode()
         req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
             "x-api-key": atslega, "anthropic-version": "2023-06-01", "content-type": "application/json"})
-        for meginajums in range(4):
+        for meginajums in range(0 if resp else 4):
             try:
                 with urllib.request.urlopen(req, timeout=180) as r:
                     resp = json.load(r)
+                kesa_f.parent.mkdir(parents=True, exist_ok=True)
+                kesa_f.write_text(json.dumps(resp, ensure_ascii=False), encoding="utf-8")
                 break
             except urllib.error.HTTPError as e:
                 if e.code in (429, 500, 502, 503, 529) and meginajums < 3:
@@ -630,7 +645,9 @@ class AzureBalss:
                 return bytes(r.audio_data), atzimes
             det = r.cancellation_details
             info = f"{det.reason} {det.error_details or ''}"
-            if any(x in info for x in ("429", "Too many", "throttl", "TooManyRequests")) and meginajums < 5:
+            if any(x in info for x in ("429", "Too many", "throttl", "TooManyRequests", "ResourceExhausted",
+                                       "No free synthesizer", "1013", "Connection was closed", "timeout", "Timeout",
+                                       "ServiceUnavailable", "503")) and meginajums < 5:
                 gaidit = 20 * (meginajums + 1)
                 zinot(f"  Azure ierobežo pieprasījumus, gaidu {gaidit} s")
                 time.sleep(gaidit)
@@ -666,6 +683,9 @@ def veidot_ssml(daļa: list[Teikums]) -> str:
     return "".join(out)
 
 
+IZMANTOTA_KESA: list[Path] = []
+
+
 def sintezet_visu(teikumi: list[Teikums], balss, max_simboli: int = 2500) -> bytes:
     lasami = [t for t in teikumi if t.klausisanai]
     dalas, cur, sk = [], [], 0
@@ -682,7 +702,18 @@ def sintezet_visu(teikumi: list[Teikums], balss, max_simboli: int = 2500) -> byt
     pauze = b"\x00\x00" * int(0.25 * SAMPLE_RATE)
     for i, d in enumerate(dalas, 1):
         nobide = len(pcm) / (2 * SAMPLE_RATE)
-        audio, atzimes = balss.sintezet(veidot_ssml(d))
+        ssml = veidot_ssml(d)
+        kesa_f = KESA / "audio" / kesa_atslega(getattr(balss, "balss", "tests"), ssml)
+        IZMANTOTA_KESA.extend([kesa_f.with_suffix(".pcm"), kesa_f.with_suffix(".json")])
+        if kesa_f.with_suffix(".pcm").exists() and kesa_f.with_suffix(".json").exists():
+            audio = kesa_f.with_suffix(".pcm").read_bytes()
+            atzimes = json.loads(kesa_f.with_suffix(".json").read_text(encoding="utf-8"))
+        else:
+            audio, atzimes = balss.sintezet(ssml)
+            if not isinstance(balss, TestaBalss):
+                kesa_f.parent.mkdir(parents=True, exist_ok=True)
+                kesa_f.with_suffix(".pcm").write_bytes(audio)
+                kesa_f.with_suffix(".json").write_text(json.dumps(atzimes), encoding="utf-8")
         ilgums = len(audio) / (2 * SAMPLE_RATE)
         for j, t in enumerate(d):
             sak = atzimes.get(f"s{t.n}")
@@ -893,7 +924,11 @@ def main() -> None:
             "orig": t.orig, "orig_rindkopa": t.rindkopa, "orig_teikums": t.teikums,
             "lappuse": t.lappuse, "virsraksts": t.virsraksts,
         } for t in teikumi if t.klausisanai],
+        "rindkopas": [{"t": r.teksts, "v": r.virsraksts, "lpp": r.lappuse, "izl": r.izlaist} for r in doc.rindkopas],
+        "atsauces": [r.teksts for r in doc.atsauces],
     }
+    # dati piezīmju apstrādei (bez audio, ātrāk nolasāmi)
+    (mape / "teksti" / f"{tid}_dati.json").write_text(json.dumps(karte, ensure_ascii=False), encoding="utf-8")
     # viens fails lietotnei: laika karte kopā ar audio
     import base64
     mime = {".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav"}[audio_cels.suffix]
@@ -903,6 +938,11 @@ def main() -> None:
     atjaunot_katalogu(mape, {"id": tid, "nosaukums": doc.nosaukums, "audio": audio_cels.name,
                              "karte": f"{tid}.json", "ilgums_s": round(ilgums, 1), "valoda": valoda})
 
+    for f in IZMANTOTA_KESA:  # audio daļas vairs nav vajadzīgas
+        try:
+            f.unlink()
+        except OSError:
+            pass
     zinot(f"\nGatavs. Ilgums {fmt_laiks(ilgums)}.")
     zinot(f"  Fails lietotnei: {mape / (tid + '.json')}")
     zinot(f"  Audio atsevišķi: {audio_cels}")
@@ -912,4 +952,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] in ("piezimes", "piezīmes"):
+        import piezimes
+        piezimes.main(sys.argv[2:])
+    else:
+        main()

@@ -70,3 +70,18 @@ Ja ir ielādēta laika karte, piezīme tiek piesaistīta teikumam, kas skanēja 
 ## Drošība
 
 Braucot piezīmei pietiek ar vienu spiedienu uz lielo pogu. Failu izvēli un iestatījumus maini tikai stāvot.
+
+## Piezīmju apstrāde (3. posms)
+
+1. iPhone: sadaļā Piezīmes nospied **Sūtīt jaunās piezīmes**, izvēlies **Saglabāt failos** un mapi `Klausisanas/piezimes`.
+2. Mac: `klausies piezimes`
+3. Rezultāts Google Drive mapē `Klausisanas`: raksta dokuments ar piezīmēm pie teikumiem, projektu dokumenti, Ideju iesūtne, Lasāmo rinda. Rezerves kopija: `Klausisanas/piezimes/*_piezimes.md`.
+
+Google daļa ir `google/Code.gs` (Google Apps Script tīmekļa lietotne). Mac atslēgu failā vajag:
+
+```
+KLAUSIES_GAS_URL=https://script.google.com/macros/s/.../exec
+KLAUSIES_GAS_SECRET=...
+```
+
+Pārbaude: `klausies piezimes --tests`
